@@ -6,6 +6,8 @@
 #include <cmath>
 #include <vector>
 
+#include "stb_image.h"
+
 #include <cube.h>
 
 using namespace std;
@@ -78,8 +80,6 @@ class VulkanApp
     VkCommandPool commandPool;
     vector<VkCommandBuffer> commandBuffers;
 
-    MyRubik rubik;
-
     struct __attribute__((packed)) MvpUniform {
         MyMatrix model;
         MyMatrix view;
@@ -92,25 +92,17 @@ class VulkanApp
     VkBuffer colorBuffer;
     VkDeviceMemory colorBufferMemory;
 
+    VkImage backgroundImage;
+    VkDeviceMemory backgroundImageMemory;
+    vkImageView backgroundImageView;
+
     // Uniforms
-    VkBuffer cubeTransformsUniformBuffer;
-    VkDeviceMemory cubeTransformsUniformBufferMemory;
-    void *cubeTransformsUniformBufferPtr;
     VkBuffer mvpUniformBuffer;
     VkDeviceMemory mvpUniformMemory;
     MvpUniform *mvpUniformPtr;
 
-    // Rotation states
-    int keyPress = -1;
-    int currentMoveKey = -1;
-    double rotStartTime;
-    static constexpr double cubeRotTime = 0.3; // view rot take 300ms
-    MyQuaternion cubeRotStart;
-    MyQuaternion cubeRotEnd;
-    MyQuaternion cubeRot;
-
    public:
-    VulkanApp();
+    VulkanApp() = default;
     ~VulkanApp() = default;
 
     VulkanApp(VulkanApp&) = delete;
@@ -149,6 +141,7 @@ class VulkanApp
     bool createVertexBuffers();
     bool createUniformBuffers();
     bool createDescriptorPool();
+    bool createBackgroundTexture();
 
     void cleanup();
     void cleanupSwapChain();
@@ -174,13 +167,15 @@ class VulkanApp
                                VkImageLayout newLayout);
     VkCommandBuffer beginSingleTimeCommands();
     void endSingleTimeCommands(VkCommandBuffer commandBuffer);
-    bool hasStencilComponent(VkFormat format) {
+
+    void copyBufferToImage(VkBuffer buffer, VkImage image,
+                           uint32_t width, uint32_t height);
+
+    static bool hasStencilComponent(VkFormat format) {
         return format == VK_FORMAT_D32_SFLOAT_S8_UINT
             || format == VK_FORMAT_D24_UNORM_S8_UINT;
     }
 
-    void startCubeRot(double currentTime);
-    void processCubeRot(double currentTime);
     bool renderFrame(uint32_t renderCount, double currentTime);
 
     // Glfw glue
@@ -199,11 +194,6 @@ class VulkanApp
     // Utils
     static MyMatrix perspective(float fovy, float aspect, float n, float f);
 };
-
-VulkanApp::VulkanApp()
-{
-    rubik.initialize();
-}
 
 MyMatrix VulkanApp::perspective(float fovy, float aspect, float n, float f)
 {
@@ -330,7 +320,7 @@ bool VulkanApp::initGlFw() {
 
     // This prevents glfw from creating a gl context
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
     window = glfwCreateWindow(800, 600, "Vulkan", nullptr, nullptr);
     glfwSetWindowUserPointer(window, this);
     glfwSetWindowSizeCallback(window, &VulkanApp::glfw_onResize);
@@ -381,8 +371,8 @@ bool VulkanApp::initVulkanInstance() {
     char *enabledLayers[layerCount];
     for (uint32_t i = 0; i < layerCount; ++i) {
         char *layerName = layers[i].layerName;
-        printf("Enabled layers: %s", layerName);
         if (i == 0) {
+            printf("Enabled layers: %s", layerName);
         }
         else {
             printf(", %s", layerName);
@@ -588,6 +578,8 @@ bool VulkanApp::createLogicalDevice() {
     VkDeviceCreateInfo createInfo = {};
     createInfo.pQueueCreateInfos = queueCreateInfo;
     createInfo.queueCreateInfoCount = numQueues;
+    // FIXME Enabling all features - maybe we probably want something
+    // more targeted
     createInfo.pEnabledFeatures = &devInfo.deviceFeatures;
     createInfo.enabledExtensionCount = extensionCount;
     createInfo.ppEnabledExtensionNames = extNames;
@@ -901,7 +893,8 @@ bool VulkanApp::createRenderPass()
 
 bool VulkanApp::createDescriptorSetLayout()
 {
-    VkDescriptorSetLayoutBinding uboLayoutBindings[2];
+    // XXX bad name - rename
+    VkDescriptorSetLayoutBinding uboLayoutBindings[3];
     memset(uboLayoutBindings, 0, sizeof(uboLayoutBindings));
     uboLayoutBindings[0].binding = 0;
     uboLayoutBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -915,9 +908,17 @@ bool VulkanApp::createDescriptorSetLayout()
     uboLayoutBindings[1].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     uboLayoutBindings[1].pImmutableSamplers = nullptr;
 
+    uboLayoutBindings[2].binding = 2;
+    uboLayoutBindings[2].descriptorCount = 1;
+    uboLayoutBindings[2].descriptorType =
+                                     VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    uboLayoutBindings[2].pImmutableSamplers = nullptr;
+    uboLayoutBindings[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 2;
+    layoutInfo.bindingCount = sizeof(uboLayoutBindings)/
+                              sizeof(*uboLayoutBindings);
     layoutInfo.pBindings = uboLayoutBindings;
 
     VkResult vkRet = vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr,
@@ -1430,6 +1431,7 @@ bool VulkanApp::createBuffer(VkBuffer *buffer,
 
 bool VulkanApp::createVertexBuffers()
 {
+#if 0
     const VkBufferUsageFlags vertexUsage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
     const VkMemoryPropertyFlags memFlags =
                                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
@@ -1452,12 +1454,14 @@ bool VulkanApp::createVertexBuffers()
     vkMapMemory(device, colorBufferMemory, 0, sizeof(rubik.colors), 0, &data);
     memcpy(data, rubik.colors, sizeof(rubik.colors));
     vkUnmapMemory(device, colorBufferMemory);
+#endif
 
     return true;
 }
 
 void VulkanApp::resetMvp()
 {
+#if 0
     const float aspect = (float) devInfo.extent.width /
                          (float) devInfo.extent.height;
     cubeRot.rotateY(M_PI / 4.0f); // 45deg
@@ -1465,10 +1469,12 @@ void VulkanApp::resetMvp()
     mvp.view.set(2, 3, -5.0f);
     mvp.proj = perspective(50.0f, aspect, 0.1f, 1000.0f);
     memcpy(mvpUniformPtr, &mvp, sizeof(mvp));
+#endif
 }
 
 bool VulkanApp::createUniformBuffers()
 {
+#if 0
     const VkBufferUsageFlags usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
     const VkMemoryPropertyFlags memFlags =
                                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
@@ -1494,20 +1500,24 @@ bool VulkanApp::createUniformBuffers()
     vkMapMemory(device, mvpUniformMemory, 0, sizeof(mvp), 0,
                 (void **) &mvpUniformPtr);
     resetMvp();
+#endif
 
     return true;
 }
 
 bool VulkanApp::createDescriptorPool()
 {
-    VkDescriptorPoolSize poolSize = {};
-    poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSize.descriptorCount = 1;
+    VkDescriptorPoolSize poolSizes;
+    memset(&poolSizes, 0, sizeof(poolSizes));
+    poolSize[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSize[0].descriptorCount = 1;
+    poolSize[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSize[1].descriptorCount = 1;
 
     VkDescriptorPoolCreateInfo poolInfo = {};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes = &poolSize;
+    poolInfo.poolSizeCount = sizeof(poolSizes)/sizeof(*poolSizes);
+    poolInfo.pPoolSizes = poolSizes;
     poolInfo.maxSets = 1;
 
     VkResult vkRet = vkCreateDescriptorPool(device, &poolInfo, nullptr,
@@ -1535,11 +1545,16 @@ bool VulkanApp::createDescriptorPool()
     bufferInfo[0].buffer = mvpUniformBuffer;
     bufferInfo[0].offset = 0;
     bufferInfo[0].range = sizeof(mvp);
-    bufferInfo[1].buffer = cubeTransformsUniformBuffer;
+    bufferInfo[1].buffer = // XXX cubeTransformsUniformBuffer;
     bufferInfo[1].offset = 0;
     bufferInfo[1].range = sizeof(rubik.mTransforms);
 
-    VkWriteDescriptorSet descriptorWrite[2];
+    VkDescriptorImageInfo imageInfo = {};
+    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    imageInfo.imageView = backgroundImageView;
+    imageInfo.sampler = backgroundSampler;
+
+    VkWriteDescriptorSet descriptorWrite[3];
     memset(descriptorWrite, 0, sizeof(descriptorWrite));
     descriptorWrite[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     descriptorWrite[0].dstSet = descriptorSet;
@@ -1555,8 +1570,16 @@ bool VulkanApp::createDescriptorPool()
     descriptorWrite[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     descriptorWrite[1].descriptorCount = 1;
     descriptorWrite[1].pBufferInfo = bufferInfo + 1;
+    descriptorWrite[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrite[1].dstSet = descriptorSet;
+    descriptorWrite[1].dstBinding = 2;
+    descriptorWrite[1].dstArrayElement = 0;
+    descriptorWrite[1].descriptorType =
+                                    VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    descriptorWrite[1].descriptorCount = 1;
+    descriptorWrite[1].pBufferInfo = &imageInfo;
 
-    vkUpdateDescriptorSets(device, 2, descriptorWrite, 0, nullptr);
+    vkUpdateDescriptorSets(device, 3, descriptorWrite, 0, nullptr);
 
     return true;
 }
@@ -1615,26 +1638,6 @@ bool VulkanApp::setupCommandBuffers()
     return true;
 }
 
-void VulkanApp::processCubeRot(double currentTime)
-{
-    const float t = (currentTime - rotStartTime) / cubeRotTime;
-    if (t < 1.0f) {
-        // We're still in the middle of the rotation, just continue slerping.
-        cubeRot = MyQuaternion::slerp(cubeRotStart, cubeRotEnd, t);
-        return;
-    }
-
-    // We're done with this one
-    if (keyPress == -1) {
-        // No more key presses
-        cubeRot = cubeRotEnd;
-        currentMoveKey = -1;
-        return;
-    }
-    // Initiate another rotation
-    startCubeRot(currentTime);
-}
-
 bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime)
 {
     // Draw
@@ -1642,13 +1645,6 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime)
 
     vkWaitForFences(device, 1, &swapChain[idx].fence, VK_TRUE, UINT64_MAX);
     vkResetFences(device, 1, &swapChain[idx].fence);
-
-    if (currentMoveKey != -1) {
-        // We're in the middle of a cube rot
-        processCubeRot(currentTime);
-        mvp.model = cubeRot.toMatrix();
-        memcpy(&mvpUniformPtr->model, &mvp.model, sizeof(mvp.model));
-    }
 
     VkResult vkRet;
     uint32_t imageIndex;
@@ -1749,6 +1745,9 @@ void VulkanApp::cleanupSwapChain()
         vkFreeMemory(device, swpe.depthImageMemory, nullptr);
         vkDestroyImage(device, swpe.depthImage, nullptr);
     }
+    vkDestroyImageView(device, backgroundImageView, nullptr);
+    vkFreeMemory(device, backgroundImageMemory, nullptr);
+    vkDestroyImage(device, backgroundImage, nullptr);
     vkDestroySwapchainKHR(device, vkSwapChain, nullptr);
 }
 
@@ -1783,73 +1782,159 @@ void VulkanApp::cleanup()
 
 void VulkanApp::onResize(int width, int height)
 {
+    // Not actually used for now, the window is not resizable
     if (width == 0 || height == 0)
         return;
     recreateSwapChain();
 }
 
-void VulkanApp::startCubeRot(double currentTime)
-{
-    if (keyPress == GLFW_KEY_SPACE) {
-        resetMvp();
-        currentMoveKey = -1;
-        return ;
-    }
-
-    constexpr float angle = (M_PI/8.0f); // 22.5deg
-    constexpr MyPoint xAxis(1.0f, 0.0f, 0.0f);
-    constexpr MyPoint yAxis(0.0f, 1.0f, 0.0f);
-    MyQuaternion newRot;
-    switch (keyPress) {
-      case GLFW_KEY_UP: newRot.setRotation(-angle, xAxis); break;
-      case GLFW_KEY_DOWN: newRot.setRotation(angle, xAxis); break;
-      case GLFW_KEY_LEFT: newRot.setRotation(-angle, yAxis); break;
-      case GLFW_KEY_RIGHT: newRot.setRotation(angle, yAxis); break;
-    }
-    MyQuaternion newEnd = newRot * cubeRot;
-    newEnd.normalize();
-
-    if (keyPress != currentMoveKey) {
-        // Different kind of rotation
-        currentMoveKey = keyPress;
-        cubeRotStart = cubeRot;
-        rotStartTime = currentTime;
-    }
-    else {
-        // Continueing the one we were doing.
-        cubeRotStart = cubeRotEnd;
-        rotStartTime += cubeRotTime;
-
-        // We may be slightly past the end of the previous one so make sure
-        // this is smooth.
-        const float t = (currentTime - rotStartTime) / cubeRotTime;
-        cubeRot = MyQuaternion::slerp(cubeRotEnd, newEnd, t);
-    }
-    cubeRotEnd = newEnd;
-}
-
 void VulkanApp::onKey(int key, int action)
 {
-#if 0
-    if (GLFW_KEY_UP == key
-     || GLFW_KEY_DOWN == key
-     || GLFW_KEY_LEFT == key
-     || GLFW_KEY_RIGHT == key
-     || GLFW_KEY_SPACE == key) {
-        if (action == GLFW_RELEASE) {
-            keyPress = -1;
-            return;
-        }
-        if (key == GLFW_KEY_SPACE && action != GLFW_PRESS) {
-            return;
-        }
+}
 
-        keyPress = key;
-        if (currentMoveKey == -1) {
-            startCubeRot(glfwGetTime());
-        }
+void VulkanApp::copyBufferToImage(VkBuffer buffer, VkImage image,
+                                  uint32_t width, uint32_t height)
+{
+    VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+
+    VkBufferImageCopy region = {};
+    region.bufferOffset = 0;
+    region.bufferRowLength = 0;
+    region.bufferImageHeight = 0;
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.mipLevel = 0;
+    region.imageSubresource.baseArrayLayer = 0;
+    region.imageSubresource.layerCount = 1;
+    region.imageOffset = {0, 0, 0};
+    region.imageExtent = {
+        width,
+        height,
+        1
+    };
+
+    vkCmdCopyBufferToImage(commandBuffer, buffer, image,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+    endSingleTimeCommands(commandBuffer);
+}
+
+bool VulkanApp::createBackgroundTexture() {
+    int texWidth, texHeight, texChannels;
+    stbi_uc* pixels = stbi_load("assets/background.png", &texWidth, &texHeight,
+                                &texChannels, STBI_rgb_alpha);
+    VkDeviceSize imageSize = texWidth * texHeight * 4;
+
+    if (!pixels || texWidth < 0 || texHeight < 0) {
+        return false;
     }
-#endif
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                 stagingBuffer, stagingBufferMemory);
+
+    void* data;
+    vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
+        memcpy(data, pixels, static_cast<size_t>(imageSize));
+    vkUnmapMemory(device, stagingBufferMemory);
+
+    stbi_image_free(pixels);
+
+    VkImageCreateInfo imageInfo = {};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.extent.width = static_cast<uint32_t>(texWidth);
+    imageInfo.extent.height = static_cast<uint32_t>(texHeight);
+    imageInfo.extent.depth = 1; // required for 2D image
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                      VK_IMAGE_USAGE_SAMPLED_BIT;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    // sampling is just for images used as attachment
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkResult vkRet;
+    vkRet = vkCreateImage(device, &imageInfo, nullptr, &backgroundImage);
+    if (vkRet != VK_SUCCESS) {
+        printf("vkCreateImage failed with %d\n", vkRet);
+        return false;
+    }
+    VkMemoryRequirements memRequirements;
+    vkGetImageMemoryRequirements(device, textureImage, &memRequirements);
+
+    VkMemoryAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits,
+                                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+    vkRet = vkAllocateMemory(device, &allocInfo, nullptr,
+                             &backgroundImageMemory);
+    if (vkRet != VK_SUCCESS) {
+        printf("vkAllocateMemory failed with %d\n", vkRet);
+        return false;
+    }
+    vkBindImageMemory(device, image, imageMemory, 0);
+
+    transitionImageLayout(backgroundImage, VK_FORMAT_R8G8B8A8_UNORM,
+                          VK_IMAGE_LAYOUT_UNDEFINED,
+                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    copyBufferToImage(stagingBuffer, textureImage, (uint32_t)texWidth,
+                      (uint32_t) texHeight);
+    transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_UNORM,
+                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    vkDestroyBuffer(device, stagingBuffer, nullptr);
+    vkFreeMemory(device, stagingBufferMemory, nullptr);
+
+    VkImageViewCreateInfo viewInfo = {};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = textureImage;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = 1;
+
+    vkRet = vkCreateImageView(device, &viewInfo, nullptr, &backgroundImageView);
+    if (vkRet != VK_SUCCESS) {
+        printf("vkCreateImageView failed with %d\n", vkRet);
+        return false;
+    }
+
+    VkSamplerCreateInfo samplerInfo = {};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_LINEAR;
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.anisotropyEnable = VK_TRUE;
+    samplerInfo.maxAnisotropy = 16;
+    samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+    samplerInfo.unnormalizedCoordinates = VK_FALSE;
+    samplerInfo.compareEnable = VK_FALSE;
+    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    samplerInfo.mipLodBias = 0.0f;
+    samplerInfo.minLod = 0.0f;
+    samplerInfo.maxLod = 0.0f;
+
+    backgroundSampler = vkCreateSampler(device, &samplerInfo, nullptr,
+                                        &backgroundSampler);
+    if (vkRet != VK_SUCCESS) {
+        printf("vkCreateSampler failed with %d\n", vkRet);
+        return false;
+    }
+
+    return true;
 }
 
 int main(void)
