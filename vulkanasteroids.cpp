@@ -12,11 +12,14 @@
 
 using namespace std;
 
+static constexpr bool enableValidation = true;
+
 class VulkanApp
 {
     GLFWwindow *window = nullptr;
     VkInstance instance;
     VkSurfaceKHR surface;
+    VkDebugReportCallbackEXT callback;
 
     struct PhysicalDeviceInfo {
         VkPhysicalDevice device = VK_NULL_HANDLE;
@@ -136,12 +139,14 @@ class VulkanApp
     bool createPipeline();
     bool createFrameBuffers();
     bool createDepthResources();
+    bool createCommandPool();
     bool createCommandBuffers();
     bool setupCommandBuffers();
     bool createVertexBuffers();
     bool createUniformBuffers();
     bool createDescriptorPool();
     bool createBackgroundTexture();
+    bool setupDebugCallback();
 
     void cleanup();
     void cleanupSwapChain();
@@ -193,6 +198,22 @@ class VulkanApp
 
     // Utils
     static MyMatrix perspective(float fovy, float aspect, float n, float f);
+
+     // Debug stuff
+     static void DestroyDebugReportCallbackEXT(VkInstance instance,
+                                    VkDebugReportCallbackEXT callback,
+                                    const VkAllocationCallbacks* pAllocator);
+     static VkResult CreateDebugReportCallbackEXT(
+                         VkInstance instance,
+                         const VkDebugReportCallbackCreateInfoEXT* pCreateInfo,
+                         const VkAllocationCallbacks* pAllocator,
+                         VkDebugReportCallbackEXT* pCallback);
+     static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
+                                         VkDebugReportFlagsEXT flags,
+                                         VkDebugReportObjectTypeEXT objType,
+                                         uint64_t obj, size_t location,
+                                         int32_t code, const char* layerPrefix,
+                                         const char* msg, void* userData);
 };
 
 MyMatrix VulkanApp::perspective(float fovy, float aspect, float n, float f)
@@ -215,7 +236,7 @@ bool VulkanApp::init()
 {
     if (!initGlFw()
      || !initVulkanInstance()
-       // Setup debug cb
+     || !setupDebugCallback()
      || !createSurface()
      || !choosePhysicalDevice()
      || !createLogicalDevice()
@@ -224,6 +245,7 @@ bool VulkanApp::init()
      || !createRenderPass()
      || !createDescriptorSetLayout()
      || !createPipeline()
+     || !createCommandPool()
      || !createCommandBuffers()
      || !createDepthResources()
      || !createFrameBuffers()
@@ -361,6 +383,24 @@ bool VulkanApp::initVulkanInstance() {
     uint32_t glfwExtensionCount = 0;
     const char** glfwExtensions = glfwGetRequiredInstanceExtensions(
                                                           &glfwExtensionCount);
+     vector<const char*> extensions(glfwExtensions,
+                              glfwExtensions + glfwExtensionCount);
+     if (enableValidation)
+         extensions.push_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
+     createInfo.enabledExtensionCount = extensions.size();
+     createInfo.ppEnabledExtensionNames = extensions.data();
+
+     for (uint32_t i = 0; i < extensions.size(); ++i) {
+           if (i == 0) {
+             printf("Enabled extensions: %s", extensions[i]);
+          }
+          else {
+             printf(", %s", extensions[i]);
+          }
+     }
+     puts("");
+
+
     createInfo.enabledExtensionCount = glfwExtensionCount;
     createInfo.ppEnabledExtensionNames = glfwExtensions;
 
@@ -368,22 +408,37 @@ bool VulkanApp::initVulkanInstance() {
     vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
     VkLayerProperties layers[layerCount];
     vkEnumerateInstanceLayerProperties(&layerCount, layers);
-    char *enabledLayers[layerCount];
+    vector<char *> enabledLayers;
     for (uint32_t i = 0; i < layerCount; ++i) {
         char *layerName = layers[i].layerName;
         if (i == 0) {
-            printf("Enabled layers: %s", layerName);
+            printf("Available layers: %s", layerName);
         }
         else {
             printf(", %s", layerName);
         }
-        // We enable everything for now
-        enabledLayers[i] = layerName;
+        if (0 == strcmp("VK_LAYER_LUNARG_standard_validation", layerName)
+          || 0 == strcmp("VK_LAYER_LUNARG_core_validation", layerName)) {
+            if (enableValidation)
+                enabledLayers.push_back(layerName);
+        }
     }
     puts("");
 
-    createInfo.enabledLayerCount = layerCount;
-    createInfo.ppEnabledLayerNames = enabledLayers;
+    for (uint32_t i = 0; i < enabledLayers.size(); ++i) {
+        if (i == 0) {
+            printf("Enabled layers: %s", enabledLayers[i]);
+        }
+        else {
+            printf(", %s", enabledLayers[i]);
+        }
+    }
+    if (!enabledLayers.empty())
+        puts("");
+
+    createInfo.enabledLayerCount = enabledLayers.size();
+    createInfo.ppEnabledLayerNames = enabledLayers.data();
+
 
     VkResult vkRet = vkCreateInstance(&createInfo, nullptr, &instance);
     if (vkRet != VK_SUCCESS) {
@@ -402,6 +457,25 @@ bool VulkanApp::createSurface() {
         return false;
     }
     return true;
+}
+
+bool VulkanApp::setupDebugCallback()
+{
+    if (!enableValidation)
+        return true;
+    VkDebugReportCallbackCreateInfoEXT createInfo = {};
+    createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT;
+    createInfo.flags = VK_DEBUG_REPORT_ERROR_BIT_EXT |
+                       VK_DEBUG_REPORT_WARNING_BIT_EXT;
+    createInfo.pfnCallback = debugCallback;
+
+    VkResult vkRet;
+    vkRet= CreateDebugReportCallbackEXT(instance, &createInfo, nullptr,
+                                        &callback);
+   if (vkRet != VK_SUCCESS) {
+       return false;
+   }
+   return true;
 }
 
 void VulkanApp::updateExtent()
@@ -576,6 +650,7 @@ bool VulkanApp::createLogicalDevice() {
     }
 
     VkDeviceCreateInfo createInfo = {};
+    createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     createInfo.pQueueCreateInfos = queueCreateInfo;
     createInfo.queueCreateInfoCount = numQueues;
     // FIXME Enabling all features - maybe we probably want something
@@ -724,7 +799,8 @@ bool VulkanApp::createSwapChain()
         // This image will only be used as a transient render target.  Its
         // purpose is only to hold the multisampled data before resolving the
         // render pass.
-        info.usage = VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
+        info.usage = VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT |
+                     VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
         info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         // Create texture.
         vkRet = vkCreateImage(device, &info, nullptr, &swpe.msaaImage);
@@ -812,6 +888,7 @@ bool VulkanApp::createRenderPass()
     // MSAA attachment
     // from https://arm-software.github.io/vulkan-sdk/multisampling.html
     VkAttachmentDescription attachments[3];
+    memset(&attachments, 0, sizeof(attachments));
     attachments[0].format = devInfo.format.format;
     attachments[0].samples = VK_SAMPLE_COUNT_4_BIT;
     attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
@@ -824,7 +901,7 @@ bool VulkanApp::createRenderPass()
     attachments[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
     attachments[1].format = devInfo.format.format;
-    attachments[1].samples = VK_SAMPLE_COUNT_4_BIT; // 4 or 1?
+    attachments[1].samples = VK_SAMPLE_COUNT_1_BIT; // required for resolve
     attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -833,7 +910,7 @@ bool VulkanApp::createRenderPass()
     attachments[1].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
     attachments[2].format = findDepthFormat();
-    attachments[2].samples = VK_SAMPLE_COUNT_1_BIT;
+    attachments[2].samples = VK_SAMPLE_COUNT_4_BIT;
     attachments[2].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     attachments[2].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     attachments[2].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -1360,7 +1437,7 @@ void VulkanApp::transitionImageLayout(VkImage image, VkFormat format,
     endSingleTimeCommands(commandBuffer);
 }
 
-bool VulkanApp::createCommandBuffers()
+bool VulkanApp::createCommandPool()
 {
     VkCommandPoolCreateInfo poolInfo = {};
     poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -1373,7 +1450,11 @@ bool VulkanApp::createCommandBuffers()
         printf("vkCreateCommandPool failed with %d\n", vkRet);
         return false;
     }
+    return true;
+}
 
+bool VulkanApp::createCommandBuffers()
+{
     // Command buffers
     VkCommandBufferAllocateInfo allocInfo = {};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -1382,6 +1463,7 @@ bool VulkanApp::createCommandBuffers()
     allocInfo.commandBufferCount = swapChain.size();
 
     commandBuffers.resize(swapChain.size());
+    VkResult vkRet;
     vkRet = vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data());
     if (vkRet != VK_SUCCESS) {
         printf("vkCreateCommandPool failed with %d\n", vkRet);
@@ -1510,7 +1592,7 @@ bool VulkanApp::createDescriptorPool()
     VkDescriptorPoolSize poolSizes;
     memset(&poolSizes, 0, sizeof(poolSizes));
     poolSize[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSize[0].descriptorCount = 1;
+    poolSize[0].descriptorCount = 2;
     poolSize[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSize[1].descriptorCount = 1;
 
@@ -1712,7 +1794,6 @@ bool VulkanApp::recreateSwapChain()
      || !createPipeline()
      || !createFrameBuffers()
      || !createCommandBuffers()
-     || !createVertexBuffers()
      || !setupCommandBuffers())
         return false;
     return true;
@@ -1774,6 +1855,8 @@ void VulkanApp::cleanup()
 
     vkDestroySurfaceKHR(instance, surface, nullptr);
     vkDestroyDevice(device, nullptr);
+    if (enableValidation)
+        DestroyDebugReportCallbackEXT(instance, callback, nullptr);
     vkDestroyInstance(instance, nullptr);
     glfwDestroyWindow(window);
 
