@@ -95,12 +95,12 @@ class VulkanApp
     // Vertex attribute buffers
     struct __attribute__((packed)) Vertex {
         MyPoint pos;
-        //MyPoint color; // keep?
+        MyPoint color;  // for debugging
         float u,v;
 
         Vertex() = default;
-        Vertex(MyPoint p, float u, float v)
-            : pos(p), u(u), v(v) {}
+        Vertex(MyPoint p, MyPoint _color, float _u, float _v)
+            : pos(p), color(_color), u(_u), v(_v) {}
     };
     vector<Vertex> vertices;
 
@@ -326,9 +326,9 @@ bool VulkanApp::init()
      || !createCommandBuffers()
      || !createDepthResources()
      || !createFrameBuffers()
+     || !createBackgroundTexture()
      || !createVertexBuffers()
      || !createUniformBuffers()
-     || !createBackgroundTexture()
      || !createDescriptorPool()
      || !setupCommandBuffers())
         return false;
@@ -1121,7 +1121,7 @@ bool VulkanApp::createPipeline()
     bindingDescriptions[1].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 #endif
 
-    VkVertexInputAttributeDescription vertexInputDescriptions[2];
+    VkVertexInputAttributeDescription vertexInputDescriptions[3];
     memset(vertexInputDescriptions, 0, sizeof(vertexInputDescriptions));
     // Vertices
     vertexInputDescriptions[0].binding = 0;
@@ -1131,8 +1131,13 @@ bool VulkanApp::createPipeline()
     // Colors
     vertexInputDescriptions[1].binding = 0;
     vertexInputDescriptions[1].location = 1;
-    vertexInputDescriptions[1].format = VK_FORMAT_R32G32_SFLOAT;
-    vertexInputDescriptions[1].offset = offsetof(Vertex, u);;
+    vertexInputDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+    vertexInputDescriptions[1].offset = offsetof(Vertex, color);
+    // uv
+    vertexInputDescriptions[2].binding = 0;
+    vertexInputDescriptions[2].location = 2;
+    vertexInputDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
+    vertexInputDescriptions[2].offset = offsetof(Vertex, u);
 
     VkPipelineVertexInputStateCreateInfo vertexInputInfo = {};
     vertexInputInfo.sType =
@@ -1596,17 +1601,23 @@ bool VulkanApp::createBuffer(VkBuffer *buffer,
 
 bool VulkanApp::createVertexBuffers()
 {
+    const float aspect = (float) devInfo.extent.width /
+                         (float) devInfo.extent.height;
+    float bottom = -aspect / 2.0f;
+    printf("bottom is %f\n", bottom);
     float top = -0.5f + float(backgroundHeight) / float(backgroundWidth);
+    printf("top of texture %f\n", top);
     constexpr float z = 0.0f;
 
     // First triangle of background
-    vertices.emplace_back(MyPoint{-0.5f, -0.5f, z}, 0.0f, 0.0f);
-    vertices.emplace_back(MyPoint{ 0.5f, -0.5f, z}, 1.0f, 1.0f);
-    vertices.emplace_back(MyPoint{ 0.5f,   top, z}, 1.0f, 0.0f);
+    constexpr MyPoint red(1.0f, 0.0f, 0.0f);
+    vertices.emplace_back(MyPoint{-0.5f, bottom, z}, red, 0.0f, 0.0f);
+    vertices.emplace_back(MyPoint{ 0.5f, bottom, z}, red, 1.0f, 1.0f);
+    vertices.emplace_back(MyPoint{ 0.5f,    top, z}, red, 1.0f, 0.0f);
     // 2nd
-    vertices.emplace_back(MyPoint{-0.5f, -0.5f, z}, 0.0f, 0.0f);
-    vertices.emplace_back(MyPoint{ 0.5f,   top, z}, 1.0f, 0.0f);
-    vertices.emplace_back(MyPoint{-0.5f,   top, z}, 0.0f, 0.0f);
+    vertices.emplace_back(MyPoint{-0.5f, bottom, z}, red, 0.0f, 0.0f);
+    vertices.emplace_back(MyPoint{ 0.5f,    top, z}, red, 1.0f, 0.0f);
+    vertices.emplace_back(MyPoint{-0.5f,    top, z}, red, 0.0f, 0.0f);
 
     uint32_t numBytes = vertices.size() * sizeof(*vertices.data());
 
@@ -1635,14 +1646,16 @@ void VulkanApp::resetVp()
                          (float) devInfo.extent.height;
     cubeRot.rotateY(M_PI / 4.0f); // 45deg
     mvp.model = cubeRot.toMatrix();
-    mvp.view.set(2, 3, -5.0f);
-    mvp.proj = perspective(50.0f, aspect, 0.1f, 1000.0f);
     memcpy(mvpUniformPtr, &mvp, sizeof(mvp));
 #endif
     const float aspect = (float) devInfo.extent.width /
                          (float) devInfo.extent.height;
     float top = aspect / 2.0f;
+    printf("top is %f\n", top);
     vp.proj = ortho(-top, top, -0.5f, 0.5f, -1.0f, 1.0f);
+    //vp.proj = ortho(-5.0f, 5.0f, -5.0f, 5.0f, -1.0f, 1.0f);
+    //vp.proj = perspective(50.0f, aspect, 0.1f, 1000.0f);
+    vp.view.set(2, 3, -0.2f);
     memcpy(vpUniformPtr, &vp, sizeof(vp));
 }
 
@@ -1785,10 +1798,10 @@ bool VulkanApp::setupCommandBuffers()
 
         VkClearValue clearColor[3] = {};
         memset(clearColor, 0, sizeof(clearColor));
-        clearColor[0].color.float32[0] = 210.0f / 255.0f;
-        clearColor[0].color.float32[1] = 230.0f / 255.0f;
-        clearColor[0].color.float32[2] = 255.0f / 255.0f;
-        clearColor[0].color.float32[3] = 1.0f;
+        //clearColor[0].color.float32[0] = 210.0f / 255.0f;
+        //clearColor[0].color.float32[1] = 230.0f / 255.0f;
+        //clearColor[0].color.float32[2] = 255.0f / 255.0f;
+        //clearColor[0].color.float32[3] = 1.0f;
         //clearColor[1] is for the resolve attachment
         clearColor[2].depthStencil = {1.0f, 0};
         renderPassInfo.clearValueCount = 3;
@@ -1806,7 +1819,7 @@ bool VulkanApp::setupCommandBuffers()
                                 pipelineLayout, 0, 1, &descriptorSet, 0,
                                 nullptr);
 
-        vkCmdDraw(b, 2, 1, 0, 0);
+        vkCmdDraw(b, 6, 1, 0, 0);
 
         vkCmdEndRenderPass(b);
 
@@ -2007,6 +2020,7 @@ bool VulkanApp::createBackgroundTexture() {
     VkDeviceSize imageSize = texWidth * texHeight * 4;
 
     if (!pixels || texWidth < 0 || texHeight < 0) {
+        printf("stbi_load failed\n");
         return false;
     }
     VkBuffer stagingBuffer;
@@ -2024,6 +2038,7 @@ bool VulkanApp::createBackgroundTexture() {
     stbi_image_free(pixels);
     backgroundWidth = texWidth;
     backgroundHeight = texHeight;
+    printf("%u %u\n",backgroundHeight, backgroundWidth);
 
     VkImageCreateInfo imageInfo = {};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
