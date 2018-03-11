@@ -1611,11 +1611,11 @@ bool VulkanApp::createVertexBuffers()
 
     // First triangle of background
     constexpr MyPoint red(1.0f, 0.0f, 0.0f);
-    vertices.emplace_back(MyPoint{-0.5f, bottom, z}, red, 0.0f, 0.0f);
+    vertices.emplace_back(MyPoint{-0.5f, bottom, z}, red, 0.0f, 1.0f);
     vertices.emplace_back(MyPoint{ 0.5f, bottom, z}, red, 1.0f, 1.0f);
     vertices.emplace_back(MyPoint{ 0.5f,    top, z}, red, 1.0f, 0.0f);
     // 2nd
-    vertices.emplace_back(MyPoint{-0.5f, bottom, z}, red, 0.0f, 0.0f);
+    vertices.emplace_back(MyPoint{-0.5f, bottom, z}, red, 0.0f, 1.0f);
     vertices.emplace_back(MyPoint{ 0.5f,    top, z}, red, 1.0f, 0.0f);
     vertices.emplace_back(MyPoint{-0.5f,    top, z}, red, 0.0f, 0.0f);
 
