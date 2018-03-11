@@ -12,7 +12,7 @@ VULKANLIBPATH=$(VULKANDIR)/macOS/lib
 
 INCS=-I$(GLFWDIR)/include/GLFW -I$(MOLTENVK)/include -I../cubesolver/
 CXXFLAGS=-Wall -W -g $(INCS) -std=c++14 -O2 -fno-exceptions
-LDFLAGS=-L$(GLFWDIR)/src -L $(VULKANLIBPATH) -framework Cocoa -framework Metal -framework IOSurface -rpath $(VULKANLIBPATH) -lglfw -lvulkan
+LDFLAGS=-O2 -L$(GLFWDIR)/src -L $(VULKANLIBPATH) -framework Cocoa -framework Metal -framework IOSurface -rpath $(VULKANLIBPATH) -lglfw -lvulkan
 
 all: vulkanasteroids fragment.spv vertex.spv
 vulkanasteroids: vulkanasteroids.o cube.o
