@@ -1650,12 +1650,11 @@ void VulkanApp::resetVp()
 #endif
     const float aspect = (float) devInfo.extent.width /
                          (float) devInfo.extent.height;
-    float top = aspect / 2.0f;
-    printf("top is %f\n", top);
+    const float top = aspect / 2.0f;
     vp.proj = ortho(-top, top, -0.5f, 0.5f, -1.0f, 1.0f);
     //vp.proj = ortho(-5.0f, 5.0f, -5.0f, 5.0f, -1.0f, 1.0f);
     //vp.proj = perspective(50.0f, aspect, 0.1f, 1000.0f);
-    vp.view.set(2, 3, -0.2f);
+    //vp.view.set(2, 3, -0.2f);
     memcpy(vpUniformPtr, &vp, sizeof(vp));
 }
 
@@ -1819,7 +1818,7 @@ bool VulkanApp::setupCommandBuffers()
                                 pipelineLayout, 0, 1, &descriptorSet, 0,
                                 nullptr);
 
-        vkCmdDraw(b, 6, 1, 0, 0);
+        vkCmdDraw(b, vertices.size(), 1, 0, 0);
 
         vkCmdEndRenderPass(b);
 
@@ -2038,7 +2037,6 @@ bool VulkanApp::createBackgroundTexture() {
     stbi_image_free(pixels);
     backgroundWidth = texWidth;
     backgroundHeight = texHeight;
-    printf("%u %u\n",backgroundHeight, backgroundWidth);
 
     VkImageCreateInfo imageInfo = {};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
