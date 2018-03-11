@@ -328,6 +328,7 @@ bool VulkanApp::init()
      || !createFrameBuffers()
      || !createVertexBuffers()
      || !createUniformBuffers()
+     || !createBackgroundTexture()
      || !createDescriptorPool()
      || !setupCommandBuffers())
         return false;
@@ -464,8 +465,7 @@ bool VulkanApp::initVulkanInstance() {
                               glfwExtensions + glfwExtensionCount);
      if (enableValidation)
          extensions.push_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
-     createInfo.enabledExtensionCount = extensions.size();
-     createInfo.ppEnabledExtensionNames = extensions.data();
+
 
      for (uint32_t i = 0; i < extensions.size(); ++i) {
            if (i == 0) {
@@ -476,10 +476,8 @@ bool VulkanApp::initVulkanInstance() {
           }
      }
      puts("");
-
-
-    createInfo.enabledExtensionCount = glfwExtensionCount;
-    createInfo.ppEnabledExtensionNames = glfwExtensions;
+     createInfo.enabledExtensionCount = extensions.size();
+     createInfo.ppEnabledExtensionNames = extensions.data();
 
     uint32_t layerCount;
     vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
@@ -516,7 +514,6 @@ bool VulkanApp::initVulkanInstance() {
     createInfo.enabledLayerCount = enabledLayers.size();
     createInfo.ppEnabledLayerNames = enabledLayers.data();
 
-
     VkResult vkRet = vkCreateInstance(&createInfo, nullptr, &instance);
     if (vkRet != VK_SUCCESS) {
         printf("vkCreateInstance failed with %d\n", vkRet);
@@ -547,9 +544,10 @@ bool VulkanApp::setupDebugCallback()
     createInfo.pfnCallback = debugCallback;
 
     VkResult vkRet;
-    vkRet= CreateDebugReportCallbackEXT(instance, &createInfo, nullptr,
-                                        &callback);
+    vkRet = CreateDebugReportCallbackEXT(instance, &createInfo, nullptr,
+                                         &callback);
    if (vkRet != VK_SUCCESS) {
+       printf("CreateDebugReportCallbackEXT failed with %d\n", vkRet);
        return false;
    }
    return true;
@@ -1049,7 +1047,7 @@ bool VulkanApp::createRenderPass()
 bool VulkanApp::createDescriptorSetLayout()
 {
     // XXX bad name - rename
-    VkDescriptorSetLayoutBinding uboLayoutBindings[3];
+    VkDescriptorSetLayoutBinding uboLayoutBindings[2];
     memset(uboLayoutBindings, 0, sizeof(uboLayoutBindings));
     uboLayoutBindings[0].binding = 0;
     uboLayoutBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -1057,18 +1055,20 @@ bool VulkanApp::createDescriptorSetLayout()
     uboLayoutBindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     uboLayoutBindings[0].pImmutableSamplers = nullptr;
 
+#if 0
     uboLayoutBindings[1].binding = 1;
     uboLayoutBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     uboLayoutBindings[1].descriptorCount = 1;
     uboLayoutBindings[1].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     uboLayoutBindings[1].pImmutableSamplers = nullptr;
+#endif
 
-    uboLayoutBindings[2].binding = 2;
-    uboLayoutBindings[2].descriptorCount = 1;
-    uboLayoutBindings[2].descriptorType =
+    uboLayoutBindings[1].binding = 1;
+    uboLayoutBindings[1].descriptorCount = 1;
+    uboLayoutBindings[1].descriptorType =
                                      VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    uboLayoutBindings[2].pImmutableSamplers = nullptr;
-    uboLayoutBindings[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    uboLayoutBindings[1].pImmutableSamplers = nullptr;
+    uboLayoutBindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -1710,7 +1710,7 @@ bool VulkanApp::createDescriptorPool()
 
     vkRet = vkAllocateDescriptorSets(device, &allocInfo, &descriptorSet);
     if (vkRet != VK_SUCCESS) {
-        printf("vkCreateDescriptorPool failed with %d\n", vkRet);
+        printf("vkAllocateDescriptorSets failed with %d\n", vkRet);
         return false;
     }
 
@@ -1750,7 +1750,7 @@ bool VulkanApp::createDescriptorPool()
 #endif
     descriptorWrite[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     descriptorWrite[1].dstSet = descriptorSet;
-    descriptorWrite[1].dstBinding = 2;
+    descriptorWrite[1].dstBinding = 1;
     descriptorWrite[1].dstArrayElement = 0;
     descriptorWrite[1].descriptorType =
                                     VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -1929,6 +1929,7 @@ void VulkanApp::cleanupSwapChain()
     vkDestroyImageView(device, backgroundImageView, nullptr);
     vkFreeMemory(device, backgroundImageMemory, nullptr);
     vkDestroyImage(device, backgroundImage, nullptr);
+    vkDestroySampler(device, backgroundSampler, nullptr);
     vkDestroySwapchainKHR(device, vkSwapChain, nullptr);
 }
 
