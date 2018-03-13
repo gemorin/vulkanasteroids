@@ -69,33 +69,13 @@ class VulkanApp
     };
     vector<SwapChainEntry> swapChain;
 
-    // Shaders
-    VkShaderModule backgroundVertexShader;
-    VkShaderModule backgroundFragmentShader;
-
     VkRenderPass renderPass;
 
     // Right now we use the same layout
-    VkDescriptorSetLayout descriptorSetLayout;
     struct Descriptor {
         VkDescriptorPool pool;
         VkDescriptorSet set;
     };
-    Descriptor backgroundDescriptor;
-
-    VkPipelineLayout pipelineLayout;
-    VkPipeline graphicsPipeline;
-
-    vector<VkFramebuffer> frameBuffers;
-
-    VkCommandPool commandPool;
-    vector<VkCommandBuffer> commandBuffers;
-
-    struct __attribute__((packed)) VpUniform {
-        MyMatrix view;
-        MyMatrix proj;
-    } vp;
-
     // Vertex attribute buffers
     struct __attribute__((packed)) Vertex {
         MyPoint pos;
@@ -106,7 +86,6 @@ class VulkanApp
         Vertex(MyPoint p, MyPoint _color, float _u, float _v)
             : pos(p), color(_color), u(_u), v(_v) {}
     };
-
     struct VertexBuffer {
         vector<Vertex> vertices;
         VkBuffer buffer;
@@ -117,8 +96,6 @@ class VulkanApp
             vkFreeMemory(device, memory, nullptr);
         }
     };
-    VertexBuffer backgroundVertex;
-
     struct Texture {
         VkImage image;
         VkDeviceMemory memory;
@@ -135,8 +112,31 @@ class VulkanApp
             vkDestroySampler(device, sampler, nullptr);
         }
     };
+    VkDescriptorSetLayout descriptorSetLayout;
+
+    // Background
+    Descriptor backgroundDescriptor;
+    VkShaderModule backgroundVertexShader;
+    VkShaderModule backgroundFragmentShader;
+    VertexBuffer backgroundVertex;
     Texture background;
+
+    // Ship
+    Descriptor shipDescriptor;
     Texture ship;
+
+    VkPipelineLayout pipelineLayout;
+    VkPipeline graphicsPipeline;
+
+    vector<VkFramebuffer> frameBuffers;
+
+    VkCommandPool commandPool;
+    vector<VkCommandBuffer> commandBuffers;
+
+    struct __attribute__((packed)) VpUniform {
+        MyMatrix view;
+        MyMatrix proj;
+    } vp;
 
     // Uniforms
     VkBuffer vpUniformBuffer;
@@ -183,7 +183,9 @@ class VulkanApp
     bool setupCommandBuffers();
     bool createVertexBuffers();
     bool createUniformBuffers();
+    bool createDescriptors();
     bool createBackgroundDescriptor();
+    bool createShipDescriptor();
     bool createTextures();
     bool setupDebugCallback();
     bool createShaders(VkShaderModule *vs, VkShaderModule *fs,
@@ -356,7 +358,7 @@ bool VulkanApp::init()
      || !createTextures()
      || !createVertexBuffers()
      || !createUniformBuffers()
-     || !createBackgroundDescriptor()
+     || !createDescriptors()
      || !setupCommandBuffers())
         return false;
     return true;
@@ -1793,6 +1795,87 @@ bool VulkanApp::createBackgroundDescriptor()
     return true;
 }
 
+bool VulkanApp::createShipDescriptor()
+{
+    VkDescriptorPoolSize poolSizes[2];
+    memset(&poolSizes, 0, sizeof(poolSizes));
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSizes[0].descriptorCount = 2;
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[1].descriptorCount = 1;
+
+    VkDescriptorPoolCreateInfo poolInfo = {};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.poolSizeCount = sizeof(poolSizes)/sizeof(*poolSizes);
+    poolInfo.pPoolSizes = poolSizes;
+    poolInfo.maxSets = 1;
+
+    VkResult vkRet = vkCreateDescriptorPool(device, &poolInfo, nullptr,
+                                            &shipDescriptor.pool);
+    if (vkRet != VK_SUCCESS) {
+        printf("vkCreateDescriptorPool failed with %d\n", vkRet);
+        return false;
+    }
+
+    VkDescriptorSetLayout layouts[] = {descriptorSetLayout};
+    VkDescriptorSetAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = shipDescriptor.pool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = layouts;
+
+    vkRet = vkAllocateDescriptorSets(device, &allocInfo,
+                                     &shipDescriptor.set);
+    if (vkRet != VK_SUCCESS) {
+        printf("vkAllocateDescriptorSets failed with %d\n", vkRet);
+        return false;
+    }
+
+    VkDescriptorBufferInfo bufferInfo[1];
+    memset(bufferInfo, 0, sizeof(bufferInfo));
+    bufferInfo[0].buffer = vpUniformBuffer;
+    bufferInfo[0].offset = 0;
+    bufferInfo[0].range = sizeof(vp);
+
+    VkDescriptorImageInfo imageInfo = {};
+    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    imageInfo.imageView = ship.view;
+    imageInfo.sampler = ship.sampler;
+
+    VkWriteDescriptorSet descriptorWrite[2];
+    memset(descriptorWrite, 0, sizeof(descriptorWrite));
+    descriptorWrite[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrite[0].dstSet = shipDescriptor.set;
+    descriptorWrite[0].dstBinding = 0;
+    descriptorWrite[0].dstArrayElement = 0;
+    descriptorWrite[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    descriptorWrite[0].descriptorCount = 1;
+    descriptorWrite[0].pBufferInfo = bufferInfo;
+    descriptorWrite[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrite[1].dstSet = shipDescriptor.set;
+    descriptorWrite[1].dstBinding = 1;
+    descriptorWrite[1].dstArrayElement = 0;
+    descriptorWrite[1].descriptorType =
+                                    VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    descriptorWrite[1].descriptorCount = 1;
+    descriptorWrite[1].pImageInfo = &imageInfo;
+
+    vkUpdateDescriptorSets(device,
+                           sizeof(descriptorWrite)/sizeof(*descriptorWrite),
+                           descriptorWrite, 0, nullptr);
+
+    return true;
+}
+
+bool VulkanApp::createDescriptors()
+{
+    if (!createBackgroundDescriptor()
+     || !createShipDescriptor()) {
+        return false;
+    }
+    return true;
+}
+
 bool VulkanApp::setupCommandBuffers()
 {
     // Setup command buffers
@@ -1978,6 +2061,7 @@ void VulkanApp::cleanup()
     vkFreeMemory(device, vpUniformMemory, nullptr);
 
     vkDestroyDescriptorPool(device, backgroundDescriptor.pool, nullptr);
+    vkDestroyDescriptorPool(device, shipDescriptor.pool, nullptr);
     vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 
     vkDestroySurfaceKHR(instance, surface, nullptr);
