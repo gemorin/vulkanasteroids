@@ -112,7 +112,9 @@ class VulkanApp
             vkDestroySampler(device, sampler, nullptr);
         }
     };
+    // We use the same layout for everything for now.
     VkDescriptorSetLayout descriptorSetLayout;
+    VkPipelineLayout pipelineLayout;
 
     // Background
     Descriptor backgroundDescriptor;
@@ -120,6 +122,7 @@ class VulkanApp
     VkShaderModule backgroundFragmentShader;
     VertexBuffer backgroundVertex;
     Texture background;
+    VkPipeline backgroundPipeline;
 
     // Ship
     Descriptor shipDescriptor;
@@ -127,9 +130,7 @@ class VulkanApp
     VkShaderModule shipVertexShader;
     VkShaderModule shipFragmentShader;
     VertexBuffer shipVertex;
-
-    VkPipelineLayout pipelineLayout;
-    VkPipeline graphicsPipeline;
+    VkPipeline shipPipeline;
 
     vector<VkFramebuffer> frameBuffers;
 
@@ -178,7 +179,7 @@ class VulkanApp
     bool loadShaders();
     bool createRenderPass();
     bool createDescriptorSetLayout();
-    bool createPipeline();
+    bool createPipelines();
     bool createFrameBuffers();
     bool createDepthResources();
     bool createCommandPool();
@@ -353,7 +354,7 @@ bool VulkanApp::init()
      || !loadShaders()
      || !createRenderPass()
      || !createDescriptorSetLayout()
-     || !createPipeline()
+     || !createPipelines()
      || !createCommandPool()
      || !createCommandBuffers()
      || !createDepthResources()
@@ -997,7 +998,9 @@ bool VulkanApp::createShaders(VkShaderModule *vs,
 
 bool VulkanApp::loadShaders() {
     if (!createShaders(&backgroundVertexShader, &backgroundFragmentShader,
-                       "vertex_background.spv", "fragment_background.spv")) {
+                       "vertex_background.spv", "fragment_background.spv")
+     || !createShaders(&shipVertexShader, &shipFragmentShader,
+                       "vertex_ship.spv", "fragment_ship.spv")) {
         return false;
     }
     return true;
@@ -1119,7 +1122,7 @@ bool VulkanApp::createDescriptorSetLayout()
     return true;
 }
 
-bool VulkanApp::createPipeline()
+bool VulkanApp::createPipelines()
 {
     // Stader stages
     VkPipelineShaderStageCreateInfo vertShaderStageInfo = {};
@@ -1141,19 +1144,12 @@ bool VulkanApp::createPipeline()
     // Fixed function stages
 
     // vertext input
-    // Point input: vertices, colors, normals
-    // XXX fix this
+    // Point input: vertices, colors, uv
     VkVertexInputBindingDescription bindingDescriptions[1];
     memset(bindingDescriptions, 0, sizeof(bindingDescriptions));
     bindingDescriptions[0].binding = 0;
     bindingDescriptions[0].stride = sizeof(Vertex);
     bindingDescriptions[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-#if 0
-    // The bindings are different because they're different buffers.
-    bindingDescriptions[1].binding = 1;
-    bindingDescriptions[1].stride = sizeof(MyPoint);
-    bindingDescriptions[1].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-#endif
 
     VkVertexInputAttributeDescription vertexInputDescriptions[3];
     memset(vertexInputDescriptions, 0, sizeof(vertexInputDescriptions));
@@ -1316,7 +1312,29 @@ bool VulkanApp::createPipeline()
     pipelineInfo.basePipelineIndex = -1;
 
     vkRet = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo,
-                                      nullptr, &graphicsPipeline);
+                                      nullptr, &backgroundPipeline);
+    if (vkRet != VK_SUCCESS) {
+       printf("vkCreateGraphicsPipelines failed with ret %d\n", vkRet);
+       return false;
+    }
+    
+    // Change shaders
+    vertShaderStageInfo.sType =
+                        VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    vertShaderStageInfo.module = shipVertexShader;
+    vertShaderStageInfo.pName = "main";
+
+    fragShaderStageInfo.sType =
+                        VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    fragShaderStageInfo.module = shipFragmentShader;
+    fragShaderStageInfo.pName = "main";
+    shaderStages[0] = vertShaderStageInfo;
+    shaderStages[1] = fragShaderStageInfo;
+    
+    vkRet = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo,
+                                      nullptr, &shipPipeline);
     if (vkRet != VK_SUCCESS) {
        printf("vkCreateGraphicsPipelines failed with ret %d\n", vkRet);
        return false;
@@ -1670,17 +1688,26 @@ bool VulkanApp::createVertexBuffers()
     memcpy(data, v->data(), numBytes);
     vkUnmapMemory(device, backgroundVertex.memory);
 
-#if 0
     // ship
     v = &shipVertex.vertices;
-    v->emplace_back(MyPoint{-0.5f, bottom, z}, red, 0.0f, 1.0f);
-    v->emplace_back(MyPoint{ 0.5f, bottom, z}, red, 1.0f, 1.0f);
-    v->emplace_back(MyPoint{ 0.5f,    top, z}, red, 1.0f, 0.0f);
+    const float x = ship.width / width / 2.0f;
+    const float y = x * ship.height / ship.width;
+    v->emplace_back(MyPoint{-x, -y, z}, red, 0.0f, 1.0f);
+    v->emplace_back(MyPoint{ x, -y, z}, red, 1.0f, 1.0f);
+    v->emplace_back(MyPoint{ x,  y, z}, red, 1.0f, 0.0f);
     // 2nd
-    v->emplace_back(MyPoint{-0.5f, bottom, z}, red, 0.0f, 1.0f);
-    v->emplace_back(MyPoint{ 0.5f,    top, z}, red, 1.0f, 0.0f);
-    v->emplace_back(MyPoint{-0.5f,    top, z}, red, 0.0f, 0.0f);
-#endif
+    v->emplace_back(MyPoint{-x, -y, z}, red, 0.0f, 1.0f);
+    v->emplace_back(MyPoint{ x,  y, z}, red, 1.0f, 0.0f);
+    v->emplace_back(MyPoint{-x,  y, z}, red, 0.0f, 0.0f);
+
+    numBytes = v->size() * sizeof(*v->data());
+    if (!createBuffer(&shipVertex.buffer, &shipVertex.memory,
+                      numBytes, vertexUsage, memFlags, false)) {
+        return false;
+    }
+    vkMapMemory(device, shipVertex.memory, 0, numBytes, 0, &data);
+    memcpy(data, v->data(), numBytes);
+    vkUnmapMemory(device, shipVertex.memory);
 
     return true;
 }
@@ -1925,17 +1952,28 @@ bool VulkanApp::setupCommandBuffers()
 
         vkCmdBeginRenderPass(b, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
         vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          graphicsPipeline);
+                          backgroundPipeline);
 
-        // XXX FIXME
-        VkBuffer buffers[] = {backgroundVertex.buffer};// , colorBuffer};
-        VkDeviceSize offsets[] = {0}; //,0};
+        VkBuffer buffers[] = {backgroundVertex.buffer};
+        VkDeviceSize offsets[] = {0};
         vkCmdBindVertexBuffers(b, 0, 1, buffers, offsets);
         vkCmdBindDescriptorSets(b, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                 pipelineLayout, 0, 1,
                                 &backgroundDescriptor.set, 0, nullptr);
 
         vkCmdDraw(b, backgroundVertex.vertices.size(), 1, 0, 0);
+
+        vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          shipPipeline);
+
+        buffers[0] = {shipVertex.buffer};
+        offsets[0] = {0};
+        vkCmdBindVertexBuffers(b, 0, 1, buffers, offsets);
+        vkCmdBindDescriptorSets(b, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                pipelineLayout, 0, 1,
+                                &shipDescriptor.set, 0, nullptr);
+
+        vkCmdDraw(b, shipVertex.vertices.size(), 1, 0, 0);
 
         vkCmdEndRenderPass(b);
 
@@ -2021,7 +2059,7 @@ bool VulkanApp::recreateSwapChain()
      || !createDepthResources()
      || !loadShaders()
      || !createRenderPass()
-     || !createPipeline()
+     || !createPipelines()
      || !createFrameBuffers()
      || !createCommandBuffers()
      || !setupCommandBuffers())
@@ -2037,11 +2075,14 @@ void VulkanApp::cleanupSwapChain()
     for (unsigned i = 0; i < swapChain.size(); ++i) {
         vkDestroyFramebuffer(device, frameBuffers[i], nullptr);
     }
-    vkDestroyPipeline(device, graphicsPipeline, nullptr);
+    vkDestroyPipeline(device, backgroundPipeline, nullptr);
+    vkDestroyPipeline(device, shipPipeline, nullptr);
     vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
     vkDestroyRenderPass(device, renderPass, nullptr);
     vkDestroyShaderModule(device, backgroundVertexShader, nullptr);
     vkDestroyShaderModule(device, backgroundFragmentShader, nullptr);
+    vkDestroyShaderModule(device, shipVertexShader, nullptr);
+    vkDestroyShaderModule(device, shipFragmentShader, nullptr);
     for (auto& swpe : swapChain) {
         vkDestroyFence(device, swpe.fence, nullptr);
         vkDestroySemaphore(device, swpe.imageAvailableSem, nullptr);
@@ -2068,6 +2109,7 @@ void VulkanApp::cleanup()
     vkDestroyCommandPool(device, commandPool, nullptr);
 
     backgroundVertex.cleanup(device);
+    shipVertex.cleanup(device);
 
     //vkDestroyBuffer(device, cubeTransformsUniformBuffer, nullptr);
     //vkUnmapMemory(device, cubeTransformsUniformBufferMemory);

@@ -14,7 +14,7 @@ INCS=-I$(GLFWDIR)/include/GLFW -I$(MOLTENVK)/include -I../cubesolver/
 CXXFLAGS=-Wall -W -g $(INCS) -std=c++14 -O2 -fno-exceptions
 LDFLAGS=-O2 -L$(GLFWDIR)/src -L $(VULKANLIBPATH) -framework Cocoa -framework Metal -framework IOSurface -rpath $(VULKANLIBPATH) -lglfw -lvulkan
 
-all: vulkanasteroids fragment_background.spv vertex_background.spv
+all: vulkanasteroids fragment_background.spv vertex_background.spv vertex_ship.spv fragment_ship.spv
 vulkanasteroids: vulkanasteroids.o cube.o
 
 cube.o: ../cubesolver/cube.cpp
@@ -26,6 +26,11 @@ fragment_background.spv: fragment_background.glsl
 vertex_background.spv: vertex_background.glsl
 	$(SHADERCOMPILER) -fshader-stage=vertex -o $@ $<
 
+fragment_ship.spv: fragment_ship.glsl
+	$(SHADERCOMPILER) -fshader-stage=fragment -o $@ $<
+
+vertex_ship.spv: vertex_ship.glsl
+	$(SHADERCOMPILER) -fshader-stage=vertex -o $@ $<
 
 clean:
 	rm -rf *.o vulkanasteroids vulkanasteroids.dSYM *.spv
