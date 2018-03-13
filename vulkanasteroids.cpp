@@ -124,6 +124,9 @@ class VulkanApp
     // Ship
     Descriptor shipDescriptor;
     Texture ship;
+    VkShaderModule shipVertexShader;
+    VkShaderModule shipFragmentShader;
+    VertexBuffer shipVertex;
 
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;
@@ -1632,27 +1635,27 @@ bool VulkanApp::createBuffer(VkBuffer *buffer,
 
 bool VulkanApp::createVertexBuffers()
 {
-    const float aspect = (float) devInfo.extent.width /
-                         (float) devInfo.extent.height;
+    const float height = (float) devInfo.extent.height;
+    const float width = (float) devInfo.extent.width;
+    const float aspect = height / width;
     float bottom = -aspect / 2.0f;
     printf("bottom is %f\n", bottom);
-    float top = -0.5f + float(background.height) / float(background.width);
+    float top = bottom + float(background.height) / float(background.width);
     printf("top of texture %f\n", top);
     constexpr float z = 0.0f;
 
     // First triangle of background
     constexpr MyPoint red(1.0f, 0.0f, 0.0f);
-    auto& v = backgroundVertex.vertices;
-    v.emplace_back(MyPoint{-0.5f, bottom, z}, red, 0.0f, 1.0f);
-    v.emplace_back(MyPoint{ 0.5f, bottom, z}, red, 1.0f, 1.0f);
-    v.emplace_back(MyPoint{ 0.5f,    top, z}, red, 1.0f, 0.0f);
+    auto* v = &backgroundVertex.vertices;
+    v->emplace_back(MyPoint{-0.5f, bottom, z}, red, 0.0f, 1.0f);
+    v->emplace_back(MyPoint{ 0.5f, bottom, z}, red, 1.0f, 1.0f);
+    v->emplace_back(MyPoint{ 0.5f,    top, z}, red, 1.0f, 0.0f);
     // 2nd
-    v.emplace_back(MyPoint{-0.5f, bottom, z}, red, 0.0f, 1.0f);
-    v.emplace_back(MyPoint{ 0.5f,    top, z}, red, 1.0f, 0.0f);
-    v.emplace_back(MyPoint{-0.5f,    top, z}, red, 0.0f, 0.0f);
+    v->emplace_back(MyPoint{-0.5f, bottom, z}, red, 0.0f, 1.0f);
+    v->emplace_back(MyPoint{ 0.5f,    top, z}, red, 1.0f, 0.0f);
+    v->emplace_back(MyPoint{-0.5f,    top, z}, red, 0.0f, 0.0f);
 
-    uint32_t numBytes = v.size() * sizeof(*v.data());
-
+    uint32_t numBytes = v->size() * sizeof(*v->data());
     const VkBufferUsageFlags vertexUsage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
     const VkMemoryPropertyFlags memFlags =
                                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
@@ -1664,8 +1667,20 @@ bool VulkanApp::createVertexBuffers()
 
     void* data;
     vkMapMemory(device, backgroundVertex.memory, 0, numBytes, 0, &data);
-    memcpy(data, v.data(), numBytes);
+    memcpy(data, v->data(), numBytes);
     vkUnmapMemory(device, backgroundVertex.memory);
+
+#if 0
+    // ship
+    v = &shipVertex.vertices;
+    v->emplace_back(MyPoint{-0.5f, bottom, z}, red, 0.0f, 1.0f);
+    v->emplace_back(MyPoint{ 0.5f, bottom, z}, red, 1.0f, 1.0f);
+    v->emplace_back(MyPoint{ 0.5f,    top, z}, red, 1.0f, 0.0f);
+    // 2nd
+    v->emplace_back(MyPoint{-0.5f, bottom, z}, red, 0.0f, 1.0f);
+    v->emplace_back(MyPoint{ 0.5f,    top, z}, red, 1.0f, 0.0f);
+    v->emplace_back(MyPoint{-0.5f,    top, z}, red, 0.0f, 0.0f);
+#endif
 
     return true;
 }
@@ -1680,10 +1695,12 @@ void VulkanApp::resetVp()
     mvp.model = cubeRot.toMatrix();
     memcpy(mvpUniformPtr, &mvp, sizeof(mvp));
 #endif
-    const float aspect = (float) devInfo.extent.width /
-                         (float) devInfo.extent.height;
-    const float top = aspect / 2.0f;
-    vp.proj = ortho(-top, top, -0.5f, 0.5f, -1.0f, 1.0f);
+    const float height = (float) devInfo.extent.height;
+    const float width = (float) devInfo.extent.width;
+    const float aspect = height / width;
+    float bottom = -aspect / 2.0f;
+    printf("bottom is %f\n", bottom);
+    vp.proj = ortho(bottom, -bottom, -0.5f, 0.5f, -1.0f, 1.0f);
     //vp.proj = ortho(-5.0f, 5.0f, -5.0f, 5.0f, -1.0f, 1.0f);
     //vp.proj = perspective(50.0f, aspect, 0.1f, 1000.0f);
     //vp.view.set(2, 3, -0.2f);
@@ -2213,9 +2230,9 @@ bool VulkanApp::createTexture(struct Texture *texture,
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
     samplerInfo.magFilter = VK_FILTER_LINEAR;
     samplerInfo.minFilter = VK_FILTER_LINEAR;
-    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     samplerInfo.anisotropyEnable = VK_TRUE;
     samplerInfo.maxAnisotropy = 16;
     samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
