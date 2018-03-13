@@ -47,6 +47,7 @@ class VulkanApp
     VkDevice device;
     VkQueue presentationQueue;
     VkQueue graphicsQueue;
+    float minY;
 
     VkSwapchainKHR vkSwapChain;
     struct SwapChainEntry {
@@ -248,6 +249,13 @@ class VulkanApp
     {
         VulkanApp *app = (VulkanApp *) glfwGetWindowUserPointer(window);
         app->onKey(key, action);
+    }
+
+    float getMinX() const {
+        return -0.5f;
+    }
+    float getMinY() const {
+        return minY;
     }
 
     // Utils
@@ -613,6 +621,9 @@ void VulkanApp::updateExtent()
     }
     devInfo.extent.width = width;
     devInfo.extent.height = height;
+    const float aspect = (float) height / (float) width;
+    minY = -aspect / 2.0f;
+    printf("bottom is %f\n", minY);
 }
 
 bool VulkanApp::choosePhysicalDevice()
@@ -1274,7 +1285,10 @@ bool VulkanApp::createPipelines()
     colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
     colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
     colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
-    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
+                                          VK_COLOR_COMPONENT_G_BIT |
+                                          VK_COLOR_COMPONENT_B_BIT |
+                                          VK_COLOR_COMPONENT_A_BIT;
 
     VkPipelineColorBlendStateCreateInfo colorBlending = {};
     colorBlending.sType =
@@ -1690,12 +1704,9 @@ bool VulkanApp::createBuffer(VkBuffer *buffer,
 
 bool VulkanApp::createVertexBuffers()
 {
-    const float height = (float) devInfo.extent.height;
-    const float width = (float) devInfo.extent.width;
-    const float aspect = height / width;
-    float bottom = -aspect / 2.0f;
-    printf("bottom is %f\n", bottom);
-    float top = bottom + float(background.height) / float(background.width);
+    const float bottom = getMinY();
+    const float top = bottom +
+                float(background.height) / float(background.width);
     printf("top of texture %f\n", top);
     constexpr float z = 0.0f;
 
@@ -1727,7 +1738,7 @@ bool VulkanApp::createVertexBuffers()
 
     // ship
     v = &shipVertex.vertices;
-    const float x = ship.width / width / 2.0f;
+    const float x = ship.width / float(devInfo.extent.width) / 2.0f;
     const float y = x * ship.height / ship.width;
     v->emplace_back(MyPoint{-x, -y, z}, red, 0.0f, 1.0f);
     v->emplace_back(MyPoint{ x, -y, z}, red, 1.0f, 1.0f);
@@ -1759,12 +1770,7 @@ void VulkanApp::resetVp()
     mvp.model = cubeRot.toMatrix();
     memcpy(mvpUniformPtr, &mvp, sizeof(mvp));
 #endif
-    const float height = (float) devInfo.extent.height;
-    const float width = (float) devInfo.extent.width;
-    const float aspect = height / width;
-    float bottom = -aspect / 2.0f;
-    printf("bottom is %f\n", bottom);
-    vp.proj = ortho(bottom, -bottom, -0.5f, 0.5f, -1.0f, 1.0f);
+    vp.proj = ortho(getMinY(), -getMinY(), getMinX(), -getMinX(), -1.0f, 1.0f);
     //vp.proj = ortho(-5.0f, 5.0f, -5.0f, 5.0f, -1.0f, 1.0f);
     //vp.proj = perspective(50.0f, aspect, 0.1f, 1000.0f);
     //vp.view.set(2, 3, -0.2f);
