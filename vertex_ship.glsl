@@ -15,14 +15,12 @@ layout(binding = 0) uniform UniformMvp {
     mat4 view;
     mat4 proj;
 } mvp;
-
-//layout(binding = 1) uniform UniformCubeTransforms {
-//    mat4 vTransform[27];
-//} cubeTransforms;
-
+layout(push_constant) uniform PushConsts {
+	mat4 transform;
+} pushConsts;
 
 void main() {
-    mat4 m = mvp.proj * mvp.view;
+    mat4 m = mvp.proj * mvp.view * pushConsts.transform;
     gl_Position = m * vec4(position, 1.0);
 
     uv = inUv;

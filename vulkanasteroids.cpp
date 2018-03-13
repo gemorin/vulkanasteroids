@@ -114,7 +114,6 @@ class VulkanApp
     };
     // We use the same layout for everything for now.
     VkDescriptorSetLayout descriptorSetLayout;
-    VkPipelineLayout pipelineLayout;
 
     // Background
     Descriptor backgroundDescriptor;
@@ -123,6 +122,7 @@ class VulkanApp
     VertexBuffer backgroundVertex;
     Texture background;
     VkPipeline backgroundPipeline;
+    VkPipelineLayout backgroundPipelineLayout;
 
     // Ship
     Descriptor shipDescriptor;
@@ -131,11 +131,14 @@ class VulkanApp
     VkShaderModule shipFragmentShader;
     VertexBuffer shipVertex;
     VkPipeline shipPipeline;
+    VkPipelineLayout shipPipelineLayout;
+    MyMatrix shipTransform;
 
     vector<VkFramebuffer> frameBuffers;
 
     VkCommandPool commandPool;
     vector<VkCommandBuffer> commandBuffers;
+    vector<bool> commandBuffersDirty;
 
     struct __attribute__((packed)) VpUniform {
         MyMatrix view;
@@ -185,6 +188,7 @@ class VulkanApp
     bool createCommandPool();
     bool createCommandBuffers();
     bool setupCommandBuffers();
+    bool resetCommandBuffer(uint32_t i);
     bool createVertexBuffers();
     bool createUniformBuffers();
     bool createDescriptors();
@@ -327,8 +331,8 @@ MyMatrix VulkanApp::ortho(float bottom, float top, float left, float right,
     result.set(1, 3, -(top + bottom) / (top - bottom));
     result.set(2, 2, -2.0f / (far - near));
     result.set(2, 3, -(far + near) / (far - near));
-    result.print();
-    puts("");
+    //result.print();
+    //puts("");
 
     MyMatrix correct;
     correct.set(1, 1, -1.0f);
@@ -336,8 +340,7 @@ MyMatrix VulkanApp::ortho(float bottom, float top, float left, float right,
     correct.set(2, 3, 0.5f);
 
     result = correct * result;
-    result.print();
-
+    //result.print();
 
     return result;
 }
@@ -1287,7 +1290,7 @@ bool VulkanApp::createPipelines()
     pipelineLayoutInfo.pPushConstantRanges = 0;
 
     VkResult vkRet = vkCreatePipelineLayout(device, &pipelineLayoutInfo,
-                                            nullptr, &pipelineLayout);
+                                            nullptr, &backgroundPipelineLayout);
     if (vkRet != VK_SUCCESS) {
        printf("vkCreatePipelineLayout failed with ret %d\n", vkRet);
        return false;
@@ -1305,7 +1308,7 @@ bool VulkanApp::createPipelines()
     pipelineInfo.pDepthStencilState = &depthStencil;
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = nullptr;
-    pipelineInfo.layout = pipelineLayout;
+    pipelineInfo.layout = backgroundPipelineLayout;
     pipelineInfo.renderPass = renderPass;
     pipelineInfo.subpass = 0;
     pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
@@ -1317,22 +1320,42 @@ bool VulkanApp::createPipelines()
        printf("vkCreateGraphicsPipelines failed with ret %d\n", vkRet);
        return false;
     }
-    
+
+    // Ship Layout
+    VkPushConstantRange pushConstantsRange = {};
+    pushConstantsRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pushConstantsRange.offset = 0;
+    pushConstantsRange.size = sizeof(shipTransform);
+
+    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipelineLayoutInfo.setLayoutCount = 1;
+    pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &pushConstantsRange;
+
+    vkRet = vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr,
+                                   &shipPipelineLayout);
+    if (vkRet != VK_SUCCESS) {
+       printf("vkCreatePipelineLayout failed with ret %d\n", vkRet);
+       return false;
+    }
+    pipelineInfo.layout = shipPipelineLayout;
+
     // Change shaders
     vertShaderStageInfo.sType =
-                        VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+                           VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
     vertShaderStageInfo.module = shipVertexShader;
     vertShaderStageInfo.pName = "main";
 
     fragShaderStageInfo.sType =
-                        VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+                           VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
     fragShaderStageInfo.module = shipFragmentShader;
     fragShaderStageInfo.pName = "main";
     shaderStages[0] = vertShaderStageInfo;
     shaderStages[1] = fragShaderStageInfo;
-    
+
     vkRet = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo,
                                       nullptr, &shipPipeline);
     if (vkRet != VK_SUCCESS) {
@@ -1582,7 +1605,7 @@ bool VulkanApp::createCommandPool()
     VkCommandPoolCreateInfo poolInfo = {};
     poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     poolInfo.queueFamilyIndex = devInfo.families[0];
-    poolInfo.flags = 0;
+    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
 
     VkResult vkRet = vkCreateCommandPool(device, &poolInfo, nullptr,
                                          &commandPool);
@@ -1603,6 +1626,7 @@ bool VulkanApp::createCommandBuffers()
     allocInfo.commandBufferCount = swapChain.size();
 
     commandBuffers.resize(swapChain.size());
+    commandBuffersDirty.resize(swapChain.size(), false);
     VkResult vkRet;
     vkRet = vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data());
     if (vkRet != VK_SUCCESS) {
@@ -1922,66 +1946,75 @@ bool VulkanApp::createDescriptors()
 
 bool VulkanApp::setupCommandBuffers()
 {
-    // Setup command buffers
-    for (unsigned i = 0; i < commandBuffers.size(); ++i) {
-        VkCommandBuffer& b = commandBuffers[i];
-        VkCommandBufferBeginInfo beginInfo = {};
-        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
-        beginInfo.pInheritanceInfo = nullptr;
+    for (uint32_t i = 0; i < commandBuffers.size(); ++i) {
+        if (!resetCommandBuffer(i))
+             return false;
+    }
+    return true;
+}
 
-        vkBeginCommandBuffer(b, &beginInfo);
+bool VulkanApp::resetCommandBuffer(uint32_t i)
+{
+    VkCommandBuffer& b = commandBuffers[i];
+    VkCommandBufferBeginInfo beginInfo = {};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
+    beginInfo.pInheritanceInfo = nullptr;
 
-        VkRenderPassBeginInfo renderPassInfo = {};
-        renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        renderPassInfo.renderPass = renderPass;
-        renderPassInfo.framebuffer = frameBuffers[i];
-        renderPassInfo.renderArea.offset = {0, 0};
-        renderPassInfo.renderArea.extent = devInfo.extent;
+    vkBeginCommandBuffer(b, &beginInfo);
 
-        VkClearValue clearColor[3] = {};
-        memset(clearColor, 0, sizeof(clearColor));
-        //clearColor[0].color.float32[0] = 210.0f / 255.0f;
-        //clearColor[0].color.float32[1] = 230.0f / 255.0f;
-        //clearColor[0].color.float32[2] = 255.0f / 255.0f;
-        //clearColor[0].color.float32[3] = 1.0f;
-        //clearColor[1] is for the resolve attachment
-        clearColor[2].depthStencil = {1.0f, 0};
-        renderPassInfo.clearValueCount = 3;
-        renderPassInfo.pClearValues = clearColor;
+    VkRenderPassBeginInfo renderPassInfo = {};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderPassInfo.renderPass = renderPass;
+    renderPassInfo.framebuffer = frameBuffers[i];
+    renderPassInfo.renderArea.offset = {0, 0};
+    renderPassInfo.renderArea.extent = devInfo.extent;
 
-        vkCmdBeginRenderPass(b, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-        vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          backgroundPipeline);
+    VkClearValue clearColor[3] = {};
+    memset(clearColor, 0, sizeof(clearColor));
+    //clearColor[0].color.float32[0] = 210.0f / 255.0f;
+    //clearColor[0].color.float32[1] = 230.0f / 255.0f;
+    //clearColor[0].color.float32[2] = 255.0f / 255.0f;
+    //clearColor[0].color.float32[3] = 1.0f;
+    //clearColor[1] is for the resolve attachment
+    clearColor[2].depthStencil = {1.0f, 0};
+    renderPassInfo.clearValueCount = 3;
+    renderPassInfo.pClearValues = clearColor;
 
-        VkBuffer buffers[] = {backgroundVertex.buffer};
-        VkDeviceSize offsets[] = {0};
-        vkCmdBindVertexBuffers(b, 0, 1, buffers, offsets);
-        vkCmdBindDescriptorSets(b, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                pipelineLayout, 0, 1,
-                                &backgroundDescriptor.set, 0, nullptr);
+    vkCmdBeginRenderPass(b, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                      backgroundPipeline);
 
-        vkCmdDraw(b, backgroundVertex.vertices.size(), 1, 0, 0);
+    VkBuffer buffers[] = {backgroundVertex.buffer};
+    VkDeviceSize offsets[] = {0};
+    vkCmdBindVertexBuffers(b, 0, 1, buffers, offsets);
+    vkCmdBindDescriptorSets(b, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            backgroundPipelineLayout, 0, 1,
+                            &backgroundDescriptor.set, 0, nullptr);
 
-        vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          shipPipeline);
+    vkCmdDraw(b, backgroundVertex.vertices.size(), 1, 0, 0);
 
-        buffers[0] = {shipVertex.buffer};
-        offsets[0] = {0};
-        vkCmdBindVertexBuffers(b, 0, 1, buffers, offsets);
-        vkCmdBindDescriptorSets(b, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                pipelineLayout, 0, 1,
-                                &shipDescriptor.set, 0, nullptr);
+    vkCmdPushConstants(b, shipPipelineLayout,
+                       VK_SHADER_STAGE_VERTEX_BIT, 0,
+                       sizeof(shipTransform), &shipTransform);
+    vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                      shipPipeline);
 
-        vkCmdDraw(b, shipVertex.vertices.size(), 1, 0, 0);
+    buffers[0] = {shipVertex.buffer};
+    offsets[0] = {0};
+    vkCmdBindVertexBuffers(b, 0, 1, buffers, offsets);
+    vkCmdBindDescriptorSets(b, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            shipPipelineLayout, 0, 1,
+                            &shipDescriptor.set, 0, nullptr);
 
-        vkCmdEndRenderPass(b);
+    vkCmdDraw(b, shipVertex.vertices.size(), 1, 0, 0);
 
-        VkResult vkRet = vkEndCommandBuffer(b);
-        if (vkRet != VK_SUCCESS) {
-            printf("vkEndCommandBuffer failed with %d\n", vkRet);
-            return false;
-        }
+    vkCmdEndRenderPass(b);
+
+    VkResult vkRet = vkEndCommandBuffer(b);
+    if (vkRet != VK_SUCCESS) {
+        printf("vkEndCommandBuffer failed with %d\n", vkRet);
+        return false;
     }
     return true;
 }
@@ -1994,6 +2027,11 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime)
 
     vkWaitForFences(device, 1, &swapChain[idx].fence, VK_TRUE, UINT64_MAX);
     vkResetFences(device, 1, &swapChain[idx].fence);
+
+    if (commandBuffersDirty[idx]) {
+        resetCommandBuffer(idx);
+        commandBuffersDirty[idx] = false;
+    }
 
     VkResult vkRet;
     uint32_t imageIndex;
@@ -2077,7 +2115,8 @@ void VulkanApp::cleanupSwapChain()
     }
     vkDestroyPipeline(device, backgroundPipeline, nullptr);
     vkDestroyPipeline(device, shipPipeline, nullptr);
-    vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+    vkDestroyPipelineLayout(device, backgroundPipelineLayout, nullptr);
+    vkDestroyPipelineLayout(device, shipPipelineLayout, nullptr);
     vkDestroyRenderPass(device, renderPass, nullptr);
     vkDestroyShaderModule(device, backgroundVertexShader, nullptr);
     vkDestroyShaderModule(device, backgroundFragmentShader, nullptr);
@@ -2141,8 +2180,22 @@ void VulkanApp::onResize(int width, int height)
     recreateSwapChain();
 }
 
-void VulkanApp::onKey(int /*key*/, int /*action*/)
+void VulkanApp::onKey(int key, int action)
 {
+    if (action != GLFW_PRESS)
+        return;
+    if (GLFW_KEY_UP == key) {
+        shipTransform.set(1, 3, shipTransform.get(1, 3) + 0.05f);
+    }
+    else if (GLFW_KEY_DOWN == key) {
+        shipTransform.set(1, 3, shipTransform.get(1, 3) - 0.05f);
+    }
+    //shipTransform.rotateZ(-M_PI/2.0f);
+
+
+    for (uint32_t i = 0; i < commandBuffersDirty.size(); ++i) {
+        commandBuffersDirty[i] = true;
+    }
 }
 
 void VulkanApp::copyBufferToImage(VkBuffer buffer, VkImage image,
