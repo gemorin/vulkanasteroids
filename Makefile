@@ -14,16 +14,16 @@ INCS=-I$(GLFWDIR)/include/GLFW -I$(MOLTENVK)/include -I../cubesolver/
 CXXFLAGS=-Wall -W -g $(INCS) -std=c++14 -O2 -fno-exceptions
 LDFLAGS=-O2 -L$(GLFWDIR)/src -L $(VULKANLIBPATH) -framework Cocoa -framework Metal -framework IOSurface -rpath $(VULKANLIBPATH) -lglfw -lvulkan
 
-all: vulkanasteroids fragment.spv vertex.spv
+all: vulkanasteroids fragment_background.spv vertex_background.spv
 vulkanasteroids: vulkanasteroids.o cube.o
 
 cube.o: ../cubesolver/cube.cpp
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
-fragment.spv: fragment.glsl
+fragment_background.spv: fragment_background.glsl
 	$(SHADERCOMPILER) -fshader-stage=fragment -o $@ $<
 
-vertex.spv: vertex.glsl
+vertex_background.spv: vertex_background.glsl
 	$(SHADERCOMPILER) -fshader-stage=vertex -o $@ $<
 
 

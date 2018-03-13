@@ -70,8 +70,8 @@ class VulkanApp
     vector<SwapChainEntry> swapChain;
 
     // Shaders
-    VkShaderModule vertexShader;
-    VkShaderModule fragShader;
+    VkShaderModule backgroundVertexShader;
+    VkShaderModule backgroundFragmentShader;
 
     VkRenderPass renderPass;
 
@@ -102,17 +102,45 @@ class VulkanApp
         Vertex(MyPoint p, MyPoint _color, float _u, float _v)
             : pos(p), color(_color), u(_u), v(_v) {}
     };
-    vector<Vertex> vertices;
 
-    VkBuffer vertexBuffer;
-    VkDeviceMemory vertexBufferMemory;
+    struct VertexBuffer {
+        vector<Vertex> vertices;
+        VkBuffer buffer;
+        VkDeviceMemory memory;
 
+        void cleanup(VkDevice device) {
+            vkDestroyBuffer(device, buffer, nullptr);
+            vkFreeMemory(device, memory, nullptr);
+        }
+    };
+    VertexBuffer backgroundVertex;
+
+    struct Texture {
+        VkImage image;
+        VkDeviceMemory memory;
+        VkImageView view;
+        uint32_t width;
+        uint32_t height;
+        VkSampler sampler;
+
+        void cleanup(VkDevice device)
+        {
+            vkDestroyImageView(device, view, nullptr);
+            vkFreeMemory(device, memory, nullptr);
+            vkDestroyImage(device, image, nullptr);
+            vkDestroySampler(device, sampler, nullptr);
+        }
+    };
+    Texture background;
+    Texture ship;
+#if 0
     VkImage backgroundImage;
     VkDeviceMemory backgroundImageMemory;
     VkImageView backgroundImageView;
     uint32_t backgroundWidth;
     uint32_t backgroundHeight;
     VkSampler backgroundSampler;
+#endif
 
     // Uniforms
     VkBuffer vpUniformBuffer;
@@ -160,8 +188,11 @@ class VulkanApp
     bool createVertexBuffers();
     bool createUniformBuffers();
     bool createDescriptorPool();
-    bool createBackgroundTexture();
+    bool createTextures();
     bool setupDebugCallback();
+    bool createShaders(VkShaderModule *vs, VkShaderModule *fs,
+                       const char *vertexPath, const char *fragPath);
+    bool createTexture(struct Texture *texture, const char *filename);
 
     void cleanup();
     void cleanupSwapChain();
@@ -326,7 +357,7 @@ bool VulkanApp::init()
      || !createCommandBuffers()
      || !createDepthResources()
      || !createFrameBuffers()
-     || !createBackgroundTexture()
+     || !createTextures()
      || !createVertexBuffers()
      || !createUniformBuffers()
      || !createDescriptorPool()
@@ -925,10 +956,14 @@ bool VulkanApp::createSwapChain()
     return true;
 }
 
-bool VulkanApp::loadShaders() {
+bool VulkanApp::createShaders(VkShaderModule *vs,
+                              VkShaderModule *fs,
+                              const char *vertexPath,
+                              const char *fragPath)
+{
     vector<char> shader;
-    if (!readFile(&shader, "vertex.spv")) {
-        printf("Could not read vertex.spv\n");
+    if (!readFile(&shader, vertexPath)) {
+        printf("Could not read %s\n", vertexPath);
         return false;
     }
 
@@ -938,22 +973,30 @@ bool VulkanApp::loadShaders() {
     createInfo.pCode = (uint32_t *) shader.data();
 
     VkResult vkRet;
-    vkRet = vkCreateShaderModule(device, &createInfo, nullptr, &vertexShader);
+    vkRet = vkCreateShaderModule(device, &createInfo, nullptr, vs);
     if (vkRet != VK_SUCCESS) {
         printf("vkCreateShaderModule failed with %d\n", vkRet);
         return false;
     }
-    if (!readFile(&shader, "fragment.spv")) {
-        printf("Could not read fragment.spv\n");
+    if (!readFile(&shader, fragPath)) {
+        printf("Could not read %s\n", fragPath);
         return false;
     }
     createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     createInfo.codeSize = shader.size();
     createInfo.pCode = (uint32_t *) shader.data();
 
-    vkRet = vkCreateShaderModule(device, &createInfo, nullptr, &fragShader);
+    vkRet = vkCreateShaderModule(device, &createInfo, nullptr, fs);
     if (vkRet != VK_SUCCESS) {
         printf("vkCreateShaderModule failed with %d\n", vkRet);
+        return false;
+    }
+    return true;
+}
+
+bool VulkanApp::loadShaders() {
+    if (!createShaders(&backgroundVertexShader, &backgroundFragmentShader,
+                       "vertex_background.spv", "fragment_background.spv")) {
         return false;
     }
     return true;
@@ -1092,14 +1135,14 @@ bool VulkanApp::createPipeline()
     vertShaderStageInfo.sType =
                         VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
-    vertShaderStageInfo.module = vertexShader;
+    vertShaderStageInfo.module = backgroundVertexShader;
     vertShaderStageInfo.pName = "main";
 
     VkPipelineShaderStageCreateInfo fragShaderStageInfo = {};
     fragShaderStageInfo.sType =
                         VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    fragShaderStageInfo.module = fragShader;
+    fragShaderStageInfo.module = backgroundFragmentShader;
     fragShaderStageInfo.pName = "main";
     VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo,
                                                       fragShaderStageInfo};
@@ -1605,35 +1648,36 @@ bool VulkanApp::createVertexBuffers()
                          (float) devInfo.extent.height;
     float bottom = -aspect / 2.0f;
     printf("bottom is %f\n", bottom);
-    float top = -0.5f + float(backgroundHeight) / float(backgroundWidth);
+    float top = -0.5f + float(background.height) / float(background.width);
     printf("top of texture %f\n", top);
     constexpr float z = 0.0f;
 
     // First triangle of background
     constexpr MyPoint red(1.0f, 0.0f, 0.0f);
-    vertices.emplace_back(MyPoint{-0.5f, bottom, z}, red, 0.0f, 1.0f);
-    vertices.emplace_back(MyPoint{ 0.5f, bottom, z}, red, 1.0f, 1.0f);
-    vertices.emplace_back(MyPoint{ 0.5f,    top, z}, red, 1.0f, 0.0f);
+    auto& v = backgroundVertex.vertices;
+    v.emplace_back(MyPoint{-0.5f, bottom, z}, red, 0.0f, 1.0f);
+    v.emplace_back(MyPoint{ 0.5f, bottom, z}, red, 1.0f, 1.0f);
+    v.emplace_back(MyPoint{ 0.5f,    top, z}, red, 1.0f, 0.0f);
     // 2nd
-    vertices.emplace_back(MyPoint{-0.5f, bottom, z}, red, 0.0f, 1.0f);
-    vertices.emplace_back(MyPoint{ 0.5f,    top, z}, red, 1.0f, 0.0f);
-    vertices.emplace_back(MyPoint{-0.5f,    top, z}, red, 0.0f, 0.0f);
+    v.emplace_back(MyPoint{-0.5f, bottom, z}, red, 0.0f, 1.0f);
+    v.emplace_back(MyPoint{ 0.5f,    top, z}, red, 1.0f, 0.0f);
+    v.emplace_back(MyPoint{-0.5f,    top, z}, red, 0.0f, 0.0f);
 
-    uint32_t numBytes = vertices.size() * sizeof(*vertices.data());
+    uint32_t numBytes = v.size() * sizeof(*v.data());
 
     const VkBufferUsageFlags vertexUsage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
     const VkMemoryPropertyFlags memFlags =
                                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                                       VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    if (!createBuffer(&vertexBuffer, &vertexBufferMemory, numBytes,
-                      vertexUsage, memFlags, false)) {
+    if (!createBuffer(&backgroundVertex.buffer, &backgroundVertex.memory,
+                      numBytes, vertexUsage, memFlags, false)) {
         return false;
     }
 
     void* data;
-    vkMapMemory(device, vertexBufferMemory, 0, numBytes, 0, &data);
-    memcpy(data, vertices.data(), numBytes);
-    vkUnmapMemory(device, vertexBufferMemory);
+    vkMapMemory(device, backgroundVertex.memory, 0, numBytes, 0, &data);
+    memcpy(data, v.data(), numBytes);
+    vkUnmapMemory(device, backgroundVertex.memory);
 
     return true;
 }
@@ -1739,8 +1783,8 @@ bool VulkanApp::createDescriptorPool()
 
     VkDescriptorImageInfo imageInfo = {};
     imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    imageInfo.imageView = backgroundImageView;
-    imageInfo.sampler = backgroundSampler;
+    imageInfo.imageView = background.view;
+    imageInfo.sampler = background.sampler;
 
     VkWriteDescriptorSet descriptorWrite[2];
     memset(descriptorWrite, 0, sizeof(descriptorWrite));
@@ -1811,14 +1855,14 @@ bool VulkanApp::setupCommandBuffers()
                           graphicsPipeline);
 
         // XXX FIXME
-        VkBuffer buffers[] = {vertexBuffer};// , colorBuffer};
+        VkBuffer buffers[] = {backgroundVertex.buffer};// , colorBuffer};
         VkDeviceSize offsets[] = {0}; //,0};
         vkCmdBindVertexBuffers(b, 0, 1, buffers, offsets);
         vkCmdBindDescriptorSets(b, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                 pipelineLayout, 0, 1, &descriptorSet, 0,
                                 nullptr);
 
-        vkCmdDraw(b, vertices.size(), 1, 0, 0);
+        vkCmdDraw(b, backgroundVertex.vertices.size(), 1, 0, 0);
 
         vkCmdEndRenderPass(b);
 
@@ -1894,6 +1938,7 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime)
 
 bool VulkanApp::recreateSwapChain()
 {
+    // XXX FIXME
     waitForIdle();
 
     updateExtent();
@@ -1922,8 +1967,8 @@ void VulkanApp::cleanupSwapChain()
     vkDestroyPipeline(device, graphicsPipeline, nullptr);
     vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
     vkDestroyRenderPass(device, renderPass, nullptr);
-    vkDestroyShaderModule(device, fragShader, nullptr);
-    vkDestroyShaderModule(device, vertexShader, nullptr);
+    vkDestroyShaderModule(device, backgroundVertexShader, nullptr);
+    vkDestroyShaderModule(device, backgroundFragmentShader, nullptr);
     for (auto& swpe : swapChain) {
         vkDestroyFence(device, swpe.fence, nullptr);
         vkDestroySemaphore(device, swpe.imageAvailableSem, nullptr);
@@ -1938,10 +1983,9 @@ void VulkanApp::cleanupSwapChain()
         vkFreeMemory(device, swpe.depthImageMemory, nullptr);
         vkDestroyImage(device, swpe.depthImage, nullptr);
     }
-    vkDestroyImageView(device, backgroundImageView, nullptr);
-    vkFreeMemory(device, backgroundImageMemory, nullptr);
-    vkDestroyImage(device, backgroundImage, nullptr);
-    vkDestroySampler(device, backgroundSampler, nullptr);
+    background.cleanup(device);
+    ship.cleanup(device);
+
     vkDestroySwapchainKHR(device, vkSwapChain, nullptr);
 }
 
@@ -1950,8 +1994,7 @@ void VulkanApp::cleanup()
     cleanupSwapChain();
     vkDestroyCommandPool(device, commandPool, nullptr);
 
-    vkDestroyBuffer(device, vertexBuffer, nullptr);
-    vkFreeMemory(device, vertexBufferMemory, nullptr);
+    backgroundVertex.cleanup(device);
 
     //vkDestroyBuffer(device, cubeTransformsUniformBuffer, nullptr);
     //vkUnmapMemory(device, cubeTransformsUniformBufferMemory);
@@ -2012,9 +2055,12 @@ void VulkanApp::copyBufferToImage(VkBuffer buffer, VkImage image,
     endSingleTimeCommands(commandBuffer);
 }
 
-bool VulkanApp::createBackgroundTexture() {
+
+bool VulkanApp::createTexture(struct Texture *texture,
+                              const char *filename)
+{
     int texWidth, texHeight, texChannels;
-    stbi_uc* pixels = stbi_load("assets/background.png", &texWidth, &texHeight,
+    stbi_uc* pixels = stbi_load(filename, &texWidth, &texHeight,
                                 &texChannels, STBI_rgb_alpha);
     VkDeviceSize imageSize = texWidth * texHeight * 4;
 
@@ -2035,14 +2081,14 @@ bool VulkanApp::createBackgroundTexture() {
         memcpy(data, pixels, static_cast<size_t>(imageSize));
     vkUnmapMemory(device, stagingBufferMemory);
     stbi_image_free(pixels);
-    backgroundWidth = texWidth;
-    backgroundHeight = texHeight;
+    texture->width = texWidth;
+    texture->height = texHeight;
 
     VkImageCreateInfo imageInfo = {};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imageInfo.imageType = VK_IMAGE_TYPE_2D;
-    imageInfo.extent.width = backgroundWidth;
-    imageInfo.extent.height = backgroundHeight;
+    imageInfo.extent.width = texture->width;
+    imageInfo.extent.height = texture->height;
     imageInfo.extent.depth = 1; // required for 2D image
     imageInfo.mipLevels = 1;
     imageInfo.arrayLayers = 1;
@@ -2056,13 +2102,13 @@ bool VulkanApp::createBackgroundTexture() {
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
 
     VkResult vkRet;
-    vkRet = vkCreateImage(device, &imageInfo, nullptr, &backgroundImage);
+    vkRet = vkCreateImage(device, &imageInfo, nullptr, &texture->image);
     if (vkRet != VK_SUCCESS) {
         printf("vkCreateImage failed with %d\n", vkRet);
         return false;
     }
     VkMemoryRequirements memRequirements;
-    vkGetImageMemoryRequirements(device, backgroundImage, &memRequirements);
+    vkGetImageMemoryRequirements(device, texture->image, &memRequirements);
 
     VkMemoryAllocateInfo allocInfo = {};
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
@@ -2071,19 +2117,19 @@ bool VulkanApp::createBackgroundTexture() {
                                           VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
     vkRet = vkAllocateMemory(device, &allocInfo, nullptr,
-                             &backgroundImageMemory);
+                             &texture->memory);
     if (vkRet != VK_SUCCESS) {
         printf("vkAllocateMemory failed with %d\n", vkRet);
         return false;
     }
-    vkBindImageMemory(device, backgroundImage, backgroundImageMemory, 0);
+    vkBindImageMemory(device, texture->image, texture->memory, 0);
 
-    transitionImageLayout(backgroundImage, VK_FORMAT_R8G8B8A8_UNORM,
+    transitionImageLayout(texture->image, VK_FORMAT_R8G8B8A8_UNORM,
                           VK_IMAGE_LAYOUT_UNDEFINED,
                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-    copyBufferToImage(stagingBuffer, backgroundImage, (uint32_t)texWidth,
+    copyBufferToImage(stagingBuffer, texture->image, (uint32_t)texWidth,
                       (uint32_t) texHeight);
-    transitionImageLayout(backgroundImage, VK_FORMAT_R8G8B8A8_UNORM,
+    transitionImageLayout(texture->image, VK_FORMAT_R8G8B8A8_UNORM,
                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     vkDestroyBuffer(device, stagingBuffer, nullptr);
@@ -2091,7 +2137,7 @@ bool VulkanApp::createBackgroundTexture() {
 
     VkImageViewCreateInfo viewInfo = {};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    viewInfo.image = backgroundImage;
+    viewInfo.image = texture->image;
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
     viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
     viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -2100,7 +2146,7 @@ bool VulkanApp::createBackgroundTexture() {
     viewInfo.subresourceRange.baseArrayLayer = 0;
     viewInfo.subresourceRange.layerCount = 1;
 
-    vkRet = vkCreateImageView(device, &viewInfo, nullptr, &backgroundImageView);
+    vkRet = vkCreateImageView(device, &viewInfo, nullptr, &texture->view);
     if (vkRet != VK_SUCCESS) {
         printf("vkCreateImageView failed with %d\n", vkRet);
         return false;
@@ -2124,12 +2170,19 @@ bool VulkanApp::createBackgroundTexture() {
     samplerInfo.minLod = 0.0f;
     samplerInfo.maxLod = 0.0f;
 
-    vkRet = vkCreateSampler(device, &samplerInfo, nullptr, &backgroundSampler);
+    vkRet = vkCreateSampler(device, &samplerInfo, nullptr, &texture->sampler);
     if (vkRet != VK_SUCCESS) {
         printf("vkCreateSampler failed with %d\n", vkRet);
         return false;
     }
 
+    return true;
+}
+
+bool VulkanApp::createTextures() {
+    if (!createTexture(&background, "assets/background.png")
+     || !createTexture(&ship, "assets/ship.png"))
+        return false;
     return true;
 }
 
