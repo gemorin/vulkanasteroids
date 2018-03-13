@@ -58,9 +58,9 @@ class VulkanApp
         VkDeviceMemory msaaMemory;
         VkImageView msaaView;
 
-        VkImage depthImage;
-        VkDeviceMemory depthImageMemory;
-        VkImageView depthImageView;
+        //VkImage depthImage;
+        //VkDeviceMemory depthImageMemory;
+        //VkImageView depthImageView;
 
         // Synchronization
         VkSemaphore imageAvailableSem;
@@ -184,7 +184,9 @@ class VulkanApp
     bool createDescriptorSetLayout();
     bool createPipelines();
     bool createFrameBuffers();
+#if 0
     bool createDepthResources();
+#endif
     bool createCommandPool();
     bool createCommandBuffers();
     bool setupCommandBuffers();
@@ -360,7 +362,7 @@ bool VulkanApp::init()
      || !createPipelines()
      || !createCommandPool()
      || !createCommandBuffers()
-     || !createDepthResources()
+     //|| !createDepthResources()
      || !createFrameBuffers()
      || !createTextures()
      || !createVertexBuffers()
@@ -1013,7 +1015,7 @@ bool VulkanApp::createRenderPass()
 {
     // MSAA attachment
     // from https://arm-software.github.io/vulkan-sdk/multisampling.html
-    VkAttachmentDescription attachments[3];
+    VkAttachmentDescription attachments[2];
     memset(&attachments, 0, sizeof(attachments));
     attachments[0].format = devInfo.format.format;
     attachments[0].samples = VK_SAMPLE_COUNT_4_BIT;
@@ -1035,6 +1037,7 @@ bool VulkanApp::createRenderPass()
     attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     attachments[1].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
+#if 0
     attachments[2].format = findDepthFormat();
     attachments[2].samples = VK_SAMPLE_COUNT_4_BIT;
     attachments[2].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
@@ -1044,6 +1047,7 @@ bool VulkanApp::createRenderPass()
     attachments[2].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     attachments[2].finalLayout =
                               VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+#endif
 
     // The color attachment is referenced by
     // 'layout (location = 0) out vec4 outColor' in the frag shader
@@ -1055,9 +1059,11 @@ bool VulkanApp::createRenderPass()
     resolveRef.attachment = 1;
     resolveRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
+#if 0
     VkAttachmentReference depthRef = {};
     depthRef.attachment = 2;
     depthRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+#endif
 
 
     VkSubpassDescription subpass = {};
@@ -1065,7 +1071,7 @@ bool VulkanApp::createRenderPass()
     subpass.colorAttachmentCount = 1;
     subpass.pColorAttachments = &colorRef;
     subpass.pResolveAttachments = &resolveRef;
-    subpass.pDepthStencilAttachment = &depthRef;
+    subpass.pDepthStencilAttachment = nullptr;
 
     VkSubpassDependency dependency = {};
     dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
@@ -1078,7 +1084,7 @@ bool VulkanApp::createRenderPass()
 
     VkRenderPassCreateInfo renderPassInfo = {};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    renderPassInfo.attachmentCount = 3;
+    renderPassInfo.attachmentCount = 2;
     renderPassInfo.pAttachments = attachments;
     renderPassInfo.subpassCount = 1;
     renderPassInfo.pSubpasses = &subpass;
@@ -1238,6 +1244,7 @@ bool VulkanApp::createPipelines()
     multisampling.alphaToOneEnable = VK_FALSE;
 
     // Stencil/depth buffer
+#if 0
     VkPipelineDepthStencilStateCreateInfo depthStencil = {};
     depthStencil.sType =
                     VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
@@ -1250,6 +1257,7 @@ bool VulkanApp::createPipelines()
     depthStencil.stencilTestEnable = VK_FALSE;
     depthStencil.front = {}; // Optional
     depthStencil.back = {}; // Optional
+#endif
 
     // Color blending
     VkPipelineColorBlendAttachmentState colorBlendAttachment = {};
@@ -1258,7 +1266,7 @@ bool VulkanApp::createPipelines()
                                           VK_COLOR_COMPONENT_B_BIT |
                                           VK_COLOR_COMPONENT_A_BIT;
     // no alpha blending
-    colorBlendAttachment.blendEnable = VK_FALSE;
+    colorBlendAttachment.blendEnable = VK_TRUE;
     colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
     colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
     colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
@@ -1305,7 +1313,7 @@ bool VulkanApp::createPipelines()
     pipelineInfo.pViewportState = &viewportState;
     pipelineInfo.pRasterizationState = &rasterizer;
     pipelineInfo.pMultisampleState = &multisampling;
-    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pDepthStencilState = nullptr; //&depthStencil;
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = nullptr;
     pipelineInfo.layout = backgroundPipelineLayout;
@@ -1371,12 +1379,13 @@ bool VulkanApp::createFrameBuffers()
     for (unsigned i = 0; i != swapChain.size(); ++i) {
         VkImageView attachments[] = { swapChain[i].msaaView,
                                       swapChain[i].view,
-                                      swapChain[i].depthImageView
+
+                                      //swapChain[i].depthImageView
                                     };
         VkFramebufferCreateInfo framebufferInfo = {};
         framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         framebufferInfo.renderPass = renderPass;
-        framebufferInfo.attachmentCount = 3;
+        framebufferInfo.attachmentCount = 2;
         framebufferInfo.pAttachments = attachments;
         framebufferInfo.width = devInfo.extent.width;
         framebufferInfo.height = devInfo.extent.height;
@@ -1424,6 +1433,7 @@ VkFormat VulkanApp::findDepthFormat() {
     );
 }
 
+#if 0
 bool VulkanApp::createDepthResources()
 {
     const VkFormat depthFormat = findDepthFormat();
@@ -1495,6 +1505,7 @@ bool VulkanApp::createDepthResources()
     }
     return true;
 }
+#endif
 
 VkCommandBuffer VulkanApp::beginSingleTimeCommands()
 {
@@ -2094,7 +2105,7 @@ bool VulkanApp::recreateSwapChain()
 
     cleanupSwapChain();
     if (!createSwapChain()
-     || !createDepthResources()
+     //|| !createDepthResources()
      || !loadShaders()
      || !createRenderPass()
      || !createPipelines()
@@ -2132,9 +2143,9 @@ void VulkanApp::cleanupSwapChain()
         vkDestroyImageView(device, swpe.msaaView, nullptr);
         vkFreeMemory(device, swpe.msaaMemory, nullptr);
         vkDestroyImage(device, swpe.msaaImage, nullptr);
-        vkDestroyImageView(device, swpe.depthImageView, nullptr);
-        vkFreeMemory(device, swpe.depthImageMemory, nullptr);
-        vkDestroyImage(device, swpe.depthImage, nullptr);
+        //vkDestroyImageView(device, swpe.depthImageView, nullptr);
+        //vkFreeMemory(device, swpe.depthImageMemory, nullptr);
+        //vkDestroyImage(device, swpe.depthImage, nullptr);
     }
     background.cleanup(device);
     ship.cleanup(device);
