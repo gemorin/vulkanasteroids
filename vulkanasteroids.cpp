@@ -75,9 +75,13 @@ class VulkanApp
 
     VkRenderPass renderPass;
 
+    // Right now we use the same layout
     VkDescriptorSetLayout descriptorSetLayout;
-    VkDescriptorPool descriptorPool;
-    VkDescriptorSet descriptorSet;
+    struct Descriptor {
+        VkDescriptorPool pool;
+        VkDescriptorSet set;
+    };
+    Descriptor backgroundDescriptor;
 
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;
@@ -133,14 +137,6 @@ class VulkanApp
     };
     Texture background;
     Texture ship;
-#if 0
-    VkImage backgroundImage;
-    VkDeviceMemory backgroundImageMemory;
-    VkImageView backgroundImageView;
-    uint32_t backgroundWidth;
-    uint32_t backgroundHeight;
-    VkSampler backgroundSampler;
-#endif
 
     // Uniforms
     VkBuffer vpUniformBuffer;
@@ -187,7 +183,7 @@ class VulkanApp
     bool setupCommandBuffers();
     bool createVertexBuffers();
     bool createUniformBuffers();
-    bool createDescriptorPool();
+    bool createBackgroundDescriptor();
     bool createTextures();
     bool setupDebugCallback();
     bool createShaders(VkShaderModule *vs, VkShaderModule *fs,
@@ -360,7 +356,7 @@ bool VulkanApp::init()
      || !createTextures()
      || !createVertexBuffers()
      || !createUniformBuffers()
-     || !createDescriptorPool()
+     || !createBackgroundDescriptor()
      || !setupCommandBuffers())
         return false;
     return true;
@@ -1089,35 +1085,25 @@ bool VulkanApp::createRenderPass()
 
 bool VulkanApp::createDescriptorSetLayout()
 {
-    // XXX bad name - rename
-    VkDescriptorSetLayoutBinding uboLayoutBindings[2];
-    memset(uboLayoutBindings, 0, sizeof(uboLayoutBindings));
-    uboLayoutBindings[0].binding = 0;
-    uboLayoutBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    uboLayoutBindings[0].descriptorCount = 1;
-    uboLayoutBindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-    uboLayoutBindings[0].pImmutableSamplers = nullptr;
+    // Right now we use only one layout for all - XXX may change later
+    VkDescriptorSetLayoutBinding layout[2];
+    memset(layout, 0, sizeof(layout));
+    layout[0].binding = 0;
+    layout[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    layout[0].descriptorCount = 1;
+    layout[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    layout[0].pImmutableSamplers = nullptr;
 
-#if 0
-    uboLayoutBindings[1].binding = 1;
-    uboLayoutBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    uboLayoutBindings[1].descriptorCount = 1;
-    uboLayoutBindings[1].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-    uboLayoutBindings[1].pImmutableSamplers = nullptr;
-#endif
-
-    uboLayoutBindings[1].binding = 1;
-    uboLayoutBindings[1].descriptorCount = 1;
-    uboLayoutBindings[1].descriptorType =
-                                     VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    uboLayoutBindings[1].pImmutableSamplers = nullptr;
-    uboLayoutBindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    layout[1].binding = 1;
+    layout[1].descriptorCount = 1;
+    layout[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    layout[1].pImmutableSamplers = nullptr;
+    layout[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = sizeof(uboLayoutBindings)/
-                              sizeof(*uboLayoutBindings);
-    layoutInfo.pBindings = uboLayoutBindings;
+    layoutInfo.bindingCount = sizeof(layout)/ sizeof(*layout);
+    layoutInfo.pBindings = layout;
 
     VkResult vkRet = vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr,
                                                  &descriptorSetLayout);
@@ -1735,7 +1721,7 @@ bool VulkanApp::createUniformBuffers()
     return true;
 }
 
-bool VulkanApp::createDescriptorPool()
+bool VulkanApp::createBackgroundDescriptor()
 {
     VkDescriptorPoolSize poolSizes[2];
     memset(&poolSizes, 0, sizeof(poolSizes));
@@ -1751,7 +1737,7 @@ bool VulkanApp::createDescriptorPool()
     poolInfo.maxSets = 1;
 
     VkResult vkRet = vkCreateDescriptorPool(device, &poolInfo, nullptr,
-                                            &descriptorPool);
+                                            &backgroundDescriptor.pool);
     if (vkRet != VK_SUCCESS) {
         printf("vkCreateDescriptorPool failed with %d\n", vkRet);
         return false;
@@ -1760,11 +1746,12 @@ bool VulkanApp::createDescriptorPool()
     VkDescriptorSetLayout layouts[] = {descriptorSetLayout};
     VkDescriptorSetAllocateInfo allocInfo = {};
     allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = descriptorPool;
+    allocInfo.descriptorPool = backgroundDescriptor.pool;
     allocInfo.descriptorSetCount = 1;
     allocInfo.pSetLayouts = layouts;
 
-    vkRet = vkAllocateDescriptorSets(device, &allocInfo, &descriptorSet);
+    vkRet = vkAllocateDescriptorSets(device, &allocInfo,
+                                     &backgroundDescriptor.set);
     if (vkRet != VK_SUCCESS) {
         printf("vkAllocateDescriptorSets failed with %d\n", vkRet);
         return false;
@@ -1775,11 +1762,6 @@ bool VulkanApp::createDescriptorPool()
     bufferInfo[0].buffer = vpUniformBuffer;
     bufferInfo[0].offset = 0;
     bufferInfo[0].range = sizeof(vp);
-#if 0
-    bufferInfo[1].buffer = // XXX cubeTransformsUniformBuffer;
-    bufferInfo[1].offset = 0;
-    bufferInfo[1].range = sizeof(rubik.mTransforms);
-#endif
 
     VkDescriptorImageInfo imageInfo = {};
     imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -1789,23 +1771,14 @@ bool VulkanApp::createDescriptorPool()
     VkWriteDescriptorSet descriptorWrite[2];
     memset(descriptorWrite, 0, sizeof(descriptorWrite));
     descriptorWrite[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrite[0].dstSet = descriptorSet;
+    descriptorWrite[0].dstSet = backgroundDescriptor.set;
     descriptorWrite[0].dstBinding = 0;
     descriptorWrite[0].dstArrayElement = 0;
     descriptorWrite[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     descriptorWrite[0].descriptorCount = 1;
     descriptorWrite[0].pBufferInfo = bufferInfo;
-#if 0
     descriptorWrite[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrite[1].dstSet = descriptorSet;
-    descriptorWrite[1].dstBinding = 1;
-    descriptorWrite[1].dstArrayElement = 0;
-    descriptorWrite[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    descriptorWrite[1].descriptorCount = 1;
-    descriptorWrite[1].pBufferInfo = bufferInfo + 1;
-#endif
-    descriptorWrite[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrite[1].dstSet = descriptorSet;
+    descriptorWrite[1].dstSet = backgroundDescriptor.set;
     descriptorWrite[1].dstBinding = 1;
     descriptorWrite[1].dstArrayElement = 0;
     descriptorWrite[1].descriptorType =
@@ -1859,8 +1832,8 @@ bool VulkanApp::setupCommandBuffers()
         VkDeviceSize offsets[] = {0}; //,0};
         vkCmdBindVertexBuffers(b, 0, 1, buffers, offsets);
         vkCmdBindDescriptorSets(b, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                pipelineLayout, 0, 1, &descriptorSet, 0,
-                                nullptr);
+                                pipelineLayout, 0, 1,
+                                &backgroundDescriptor.set, 0, nullptr);
 
         vkCmdDraw(b, backgroundVertex.vertices.size(), 1, 0, 0);
 
@@ -2004,7 +1977,7 @@ void VulkanApp::cleanup()
     vkUnmapMemory(device, vpUniformMemory);
     vkFreeMemory(device, vpUniformMemory, nullptr);
 
-    vkDestroyDescriptorPool(device, descriptorPool, nullptr);
+    vkDestroyDescriptorPool(device, backgroundDescriptor.pool, nullptr);
     vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 
     vkDestroySurfaceKHR(instance, surface, nullptr);
