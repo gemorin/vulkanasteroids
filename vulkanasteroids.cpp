@@ -16,7 +16,7 @@
 
 using namespace std;
 
-static constexpr bool enableValidation = true;
+static constexpr bool enableValidation = false;
 
 class VulkanApp
 {
@@ -133,13 +133,52 @@ class VulkanApp
     VertexBuffer shipVertex;
     VkPipeline shipPipeline;
     VkPipelineLayout shipPipelineLayout;
-    MyMatrix shipTransform;
+    //MyMatrix shipTransform;
+
+    struct ShipState {
+        MyPoint centerPos;
+        MyPoint velocity;
+        MyPoint accel;
+
+        MyQuaternion orientation;
+
+        MyQuaternion rotStart;
+        MyQuaternion rotEnd;
+        double rotStartTime;
+        bool inRotation = false;
+
+        void initiateRotation(bool pos, double currentTime)
+        {
+            const float delta = M_PI/18.0f;
+
+            rotStart = orientation;
+            MyQuaternion deltaQ;
+            deltaQ.rotateZ(pos ? delta : -delta);
+            rotEnd = deltaQ * rotStart;
+            rotEnd.normalize();
+            rotStartTime = currentTime;
+            inRotation = true;
+        }
+
+        void updateOrientation(double currentTime)
+        {
+            constexpr float totTime = 0.06f;
+            const float t = (currentTime - rotStartTime) / totTime;
+
+            orientation = MyQuaternion::slerp(rotStart, rotEnd, t);
+            if (t < 1.0f) {
+                return;
+            }
+            inRotation = false;
+        }
+    };
+    ShipState shipState;
 
     vector<VkFramebuffer> frameBuffers;
 
     VkCommandPool commandPool;
     vector<VkCommandBuffer> commandBuffers;
-    vector<bool> commandBuffersDirty;
+    //vector<bool> commandBuffersDirty;
 
     struct __attribute__((packed)) VpUniform {
         MyMatrix view;
@@ -257,6 +296,7 @@ class VulkanApp
     float getMinY() const {
         return minY;
     }
+    MyMatrix getShipTransform();
 
     // Utils
     static MyMatrix perspective(float fovy, float aspect, float n, float f);
@@ -279,6 +319,13 @@ class VulkanApp
                                          int32_t code, const char* layerPrefix,
                                          const char* msg, void* userData);
 };
+
+MyMatrix VulkanApp::getShipTransform()
+{
+    //MyMatrix ret
+    //ret.rotateZ(shipState.angle);
+    return shipState.orientation.toMatrix();
+}
 
 VkResult VulkanApp::CreateDebugReportCallbackEXT(
                         VkInstance instance,
@@ -387,8 +434,16 @@ void VulkanApp::run()
         return;
 
     uint32_t renderCount = 0;
+    double prevFps = 0.0;
+    bool updateStart = true;
+    double start;
     while(1) {
-        bool running = renderFrame(renderCount++, glfwGetTime());
+        const double currentTime = glfwGetTime();
+        if (updateStart) {
+            start = currentTime;
+            updateStart = false;
+        }
+        bool running = renderFrame(renderCount++, currentTime);
 
         glfwPollEvents();
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) != GLFW_RELEASE)
@@ -397,6 +452,15 @@ void VulkanApp::run()
             running = false;
         if (!running) {
             break;
+        }
+        if (0 == (renderCount % 100)) {
+            double fps = 100.0 / (currentTime - start);
+            double diff = fps / prevFps;
+            if (diff > 1.1 || diff < 0.9) {
+                printf("fps %.2lf\n", fps);
+            }
+            prevFps = fps;
+            updateStart = true;
         }
     }
 
@@ -470,7 +534,7 @@ bool VulkanApp::initGlFw() {
     window = glfwCreateWindow(800, 600, "Vulkan", nullptr, nullptr);
     glfwSetWindowUserPointer(window, this);
     glfwSetWindowSizeCallback(window, &VulkanApp::glfw_onResize);
-    glfwSetKeyCallback(window, &VulkanApp::glfw_onKey);
+    // glfwSetKeyCallback(window, &VulkanApp::glfw_onKey);
 
     VkExtensionProperties properties[16];
     uint32_t extensionCount = 16;
@@ -508,10 +572,9 @@ bool VulkanApp::initVulkanInstance() {
     const char** glfwExtensions = glfwGetRequiredInstanceExtensions(
                                                           &glfwExtensionCount);
      vector<const char*> extensions(glfwExtensions,
-                              glfwExtensions + glfwExtensionCount);
+                                    glfwExtensions + glfwExtensionCount);
      if (enableValidation)
          extensions.push_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
-
 
      for (uint32_t i = 0; i < extensions.size(); ++i) {
            if (i == 0) {
@@ -1349,7 +1412,7 @@ bool VulkanApp::createPipelines()
     VkPushConstantRange pushConstantsRange = {};
     pushConstantsRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     pushConstantsRange.offset = 0;
-    pushConstantsRange.size = sizeof(shipTransform);
+    pushConstantsRange.size = sizeof(MyMatrix);
 
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutInfo.setLayoutCount = 1;
@@ -1653,7 +1716,7 @@ bool VulkanApp::createCommandBuffers()
     allocInfo.commandBufferCount = swapChain.size();
 
     commandBuffers.resize(swapChain.size());
-    commandBuffersDirty.resize(swapChain.size(), false);
+    //commandBuffersDirty.resize(swapChain.size(), false);
     VkResult vkRet;
     vkRet = vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data());
     if (vkRet != VK_SUCCESS) {
@@ -2013,6 +2076,7 @@ bool VulkanApp::resetCommandBuffer(uint32_t i)
 
     vkCmdDraw(b, backgroundVertex.vertices.size(), 1, 0, 0);
 
+    MyMatrix shipTransform = getShipTransform();
     vkCmdPushConstants(b, shipPipelineLayout,
                        VK_SHADER_STAGE_VERTEX_BIT, 0,
                        sizeof(shipTransform), &shipTransform);
@@ -2044,13 +2108,24 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime)
     // Draw
     const uint32_t idx = renderCount % swapChain.size();
 
-    vkWaitForFences(device, 1, &swapChain[idx].fence, VK_TRUE, UINT64_MAX);
-    vkResetFences(device, 1, &swapChain[idx].fence);
+    //vkWaitForFences(device, 1, &swapChain[idx].fence, VK_TRUE, UINT64_MAX);
+    //vkResetFences(device, 1, &swapChain[idx].fence);
 
-    if (commandBuffersDirty[idx]) {
-        resetCommandBuffer(idx);
-        commandBuffersDirty[idx] = false;
+    //if (commandBuffersDirty[idx]) {
+    //    resetCommandBuffer(idx);
+    //    commandBuffersDirty[idx] = false;
+    //}
+    if (shipState.inRotation) {
+        shipState.updateOrientation(currentTime);
     }
+    else {
+        if (GLFW_PRESS == glfwGetKey(window, GLFW_KEY_LEFT)
+         || GLFW_PRESS == glfwGetKey(window, GLFW_KEY_RIGHT)) {
+            bool pos = (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS);
+            shipState.initiateRotation(pos, currentTime);
+        }
+    }
+    resetCommandBuffer(idx);
 
     VkResult vkRet;
     uint32_t imageIndex;
@@ -2100,6 +2175,7 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime)
         // XXX Handle VK_SUBOPTIMAL_KHR VK_ERROR_OUT_OF_DATE_KHR
         printf("vkQueuePresentKHR returned %d\n", vkRet);
     }
+    waitForIdle();
 
     return true;
 }
@@ -2199,10 +2275,12 @@ void VulkanApp::onResize(int width, int height)
     recreateSwapChain();
 }
 
-void VulkanApp::onKey(int key, int action)
+void VulkanApp::onKey(int /*key*/, int /*action*/)
 {
+#if 0
     if (action != GLFW_PRESS)
         return;
+#if 0
     if (GLFW_KEY_UP == key) {
         shipTransform.set(1, 3, shipTransform.get(1, 3) + 0.05f);
     }
@@ -2210,11 +2288,18 @@ void VulkanApp::onKey(int key, int action)
         shipTransform.set(1, 3, shipTransform.get(1, 3) - 0.05f);
     }
     //shipTransform.rotateZ(-M_PI/2.0f);
-
-
-    for (uint32_t i = 0; i < commandBuffersDirty.size(); ++i) {
-        commandBuffersDirty[i] = true;
+#endif
+    const float delta = M_PI/18.0f;
+    if (GLFW_KEY_RIGHT == key || GLFW_KEY_LEFT == key) {
+        if (!shipState.inRotation) {
+            shipState.rotate(key == GLFW_KEY_LEFT);
+        }
     }
+
+    //for (uint32_t i = 0; i < commandBuffersDirty.size(); ++i) {
+    //    commandBuffersDirty[i] = true;
+    //}
+#endif
 }
 
 void VulkanApp::copyBufferToImage(VkBuffer buffer, VkImage image,
