@@ -16,7 +16,7 @@
 
 using namespace std;
 
-static constexpr bool enableValidation = false;
+static constexpr bool enableValidation = true;
 
 class VulkanApp
 {
@@ -135,42 +135,26 @@ class VulkanApp
     VkPipelineLayout shipPipelineLayout;
     //MyMatrix shipTransform;
 
-    struct ShipState {
-        MyPoint centerPos;
+    class ShipState {
+        MyPoint position;
         MyPoint velocity;
-        MyPoint accel;
+        //MyPoint accel;
 
         MyQuaternion orientation;
+
+        double lastFrame;
 
         MyQuaternion rotStart;
         MyQuaternion rotEnd;
         double rotStartTime;
         bool inRotation = false;
 
-        void initiateRotation(bool pos, double currentTime)
-        {
-            const float delta = M_PI/18.0f;
-
-            rotStart = orientation;
-            MyQuaternion deltaQ;
-            deltaQ.rotateZ(pos ? delta : -delta);
-            rotEnd = deltaQ * rotStart;
-            rotEnd.normalize();
-            rotStartTime = currentTime;
-            inRotation = true;
-        }
-
-        void updateOrientation(double currentTime)
-        {
-            constexpr float totTime = 0.06f;
-            const float t = (currentTime - rotStartTime) / totTime;
-
-            orientation = MyQuaternion::slerp(rotStart, rotEnd, t);
-            if (t < 1.0f) {
-                return;
-            }
-            inRotation = false;
-        }
+      public:
+        void initiateRotation(bool pos, double currentTime);
+        void updateOrientation(double currentTime, GLFWwindow *window);
+        void updatePosition(double currentTime, VulkanApp *app);
+        void update(double currentTime, VulkanApp *app);
+        MyMatrix getTransform();
     };
     ShipState shipState;
 
@@ -296,7 +280,6 @@ class VulkanApp
     float getMinY() const {
         return minY;
     }
-    MyMatrix getShipTransform();
 
     // Utils
     static MyMatrix perspective(float fovy, float aspect, float n, float f);
@@ -320,11 +303,84 @@ class VulkanApp
                                          const char* msg, void* userData);
 };
 
-MyMatrix VulkanApp::getShipTransform()
+void VulkanApp::ShipState::initiateRotation(bool pos, double currentTime)
 {
-    //MyMatrix ret
-    //ret.rotateZ(shipState.angle);
-    return shipState.orientation.toMatrix();
+    const float delta = M_PI/18.0f;
+
+    rotStart = orientation;
+    MyQuaternion deltaQ;
+    deltaQ.rotateZ(pos ? delta : -delta);
+    rotEnd = deltaQ * rotStart;
+    rotEnd.normalize();
+    rotStartTime = currentTime;
+    inRotation = true;
+}
+
+void
+VulkanApp::ShipState::updateOrientation(double currentTime, GLFWwindow *window)
+{
+    if (inRotation) {
+        constexpr float totTime = 0.06f;
+        const float t = (currentTime - rotStartTime) / totTime;
+
+        orientation = MyQuaternion::slerp(rotStart, rotEnd, t);
+        if (t < 1.0f) {
+            return;
+        }
+        inRotation = false;
+        return;
+    }
+    if (GLFW_PRESS == glfwGetKey(window, GLFW_KEY_LEFT)
+     || GLFW_PRESS == glfwGetKey(window, GLFW_KEY_RIGHT)) {
+        bool pos = (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS);
+        initiateRotation(pos, currentTime);
+    }
+}
+
+void
+VulkanApp::ShipState::updatePosition(double currentTime, VulkanApp *app)
+{
+    static double lastAccel = 0;
+    if (//(currentTime - lastAccel) > 0.1 &&
+        velocity.length() < 0.003f &&
+        GLFW_PRESS == glfwGetKey(app->window, GLFW_KEY_UP)) {
+        const float acceleration = 5e-5f;
+        MyPoint direction(0.0f, -1.0f, 0.0f);
+        velocity += direction.transform(orientation) * acceleration;
+        lastAccel = currentTime;
+    }
+    position += velocity;
+    velocity *= 0.999f;
+
+    if (position.x > -app->getMinX()) {
+        position.x = app->getMinX();
+    }
+    else if (position.x < app->getMinX()) {
+        position.x = -app->getMinX();
+    }
+    if (position.y > -app->getMinY()) {
+        position.y = app->getMinY();
+    }
+    else if (position.y < app->getMinY()) {
+        position.y = -app->getMinY();
+    }
+}
+
+void VulkanApp::ShipState::update(double currentTime, VulkanApp *app)
+{
+    updateOrientation(currentTime, app->window);
+    updatePosition(currentTime, app);
+
+    lastFrame = currentTime;
+}
+
+MyMatrix VulkanApp::ShipState::getTransform()
+{
+    MyMatrix ret = orientation.toMatrix();
+    ret.set(0, 3, position.x);
+    ret.set(1, 3, position.y);
+    ret.set(2, 3, position.z);
+    return ret;
 }
 
 VkResult VulkanApp::CreateDebugReportCallbackEXT(
@@ -470,8 +526,8 @@ void VulkanApp::run()
 
 void VulkanApp::waitForIdle()
 {
-    for (auto & swpe : swapChain)
-        vkWaitForFences(device, 1, &swpe.fence, VK_TRUE, UINT64_MAX);
+    //for (auto & swpe : swapChain)
+    //    vkWaitForFences(device, 1, &swpe.fence, VK_TRUE, UINT64_MAX);
     vkDeviceWaitIdle(device);
 }
 
@@ -531,7 +587,7 @@ bool VulkanApp::initGlFw() {
     // This prevents glfw from creating a gl context
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-    window = glfwCreateWindow(800, 600, "Vulkan", nullptr, nullptr);
+    window = glfwCreateWindow(800, 600, "Vulkasteroids", nullptr, nullptr);
     glfwSetWindowUserPointer(window, this);
     glfwSetWindowSizeCallback(window, &VulkanApp::glfw_onResize);
     // glfwSetKeyCallback(window, &VulkanApp::glfw_onKey);
@@ -558,7 +614,7 @@ bool VulkanApp::initGlFw() {
 bool VulkanApp::initVulkanInstance() {
     VkApplicationInfo appInfo = {};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    appInfo.pApplicationName = "Vulkan triangle";
+    appInfo.pApplicationName = "Vulkasteroids";
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.pEngineName = "DeadCanard's Engine";
     appInfo.engineVersion = VK_MAKE_VERSION(0, 0, 1);
@@ -1801,7 +1857,7 @@ bool VulkanApp::createVertexBuffers()
 
     // ship
     v = &shipVertex.vertices;
-    const float x = ship.width / float(devInfo.extent.width) / 2.0f;
+    const float x = ship.width / float(devInfo.extent.width) / 3.0f;
     const float y = x * ship.height / ship.width;
     v->emplace_back(MyPoint{-x, -y, z}, red, 0.0f, 1.0f);
     v->emplace_back(MyPoint{ x, -y, z}, red, 1.0f, 1.0f);
@@ -2076,7 +2132,7 @@ bool VulkanApp::resetCommandBuffer(uint32_t i)
 
     vkCmdDraw(b, backgroundVertex.vertices.size(), 1, 0, 0);
 
-    MyMatrix shipTransform = getShipTransform();
+    MyMatrix shipTransform = shipState.getTransform();
     vkCmdPushConstants(b, shipPipelineLayout,
                        VK_SHADER_STAGE_VERTEX_BIT, 0,
                        sizeof(shipTransform), &shipTransform);
@@ -2115,6 +2171,8 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime)
     //    resetCommandBuffer(idx);
     //    commandBuffersDirty[idx] = false;
     //}
+
+#if 0
     if (shipState.inRotation) {
         shipState.updateOrientation(currentTime);
     }
@@ -2125,6 +2183,8 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime)
             shipState.initiateRotation(pos, currentTime);
         }
     }
+#endif
+    shipState.update(currentTime, this);
     resetCommandBuffer(idx);
 
     VkResult vkRet;
@@ -2153,7 +2213,7 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime)
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
 
-    vkRet = vkQueueSubmit(graphicsQueue, 1, &submitInfo, swapChain[idx].fence);
+    vkRet = vkQueueSubmit(graphicsQueue, 1, &submitInfo, nullptr); //swapChain[idx].fence);
     if (vkRet != VK_SUCCESS) {
         printf("vkQueueSubmit failed with %d\n", vkRet);
         return false;
