@@ -344,7 +344,8 @@ VulkanApp::ShipState::updatePosition(double currentTime, VulkanApp *app)
     if (//(currentTime - lastAccel) > 0.1 &&
         velocity.length() < 0.003f &&
         GLFW_PRESS == glfwGetKey(app->window, GLFW_KEY_UP)) {
-        const float acceleration = 5e-5f;
+        const float acceleration = 3e-5f;
+        // ship model points down
         MyPoint direction(0.0f, -1.0f, 0.0f);
         velocity += direction.transform(orientation) * acceleration;
         lastAccel = currentTime;
