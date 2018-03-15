@@ -3,14 +3,15 @@ CC=clang++
 
 GLFWDIR=/Users/guillaume/dev/glfw
 
-#MOLTENDIR=/Users/guillaume/dev/MoltenVK
-#MOLTENPKG=$(MOLTENDIR)/Package/Release
+
 VULKANDIR=/Users/guillaume/dev/vulkansdk-macos-1.0.69.0
 SHADERCOMPILER=$(VULKANDIR)/macOS/bin/glslc
-MOLTENVK=$(VULKANDIR)/MoltenVK
+VULKANINCPATH=$(VULKANDIR)/MoltenVK/include
 VULKANLIBPATH=$(VULKANDIR)/macOS/lib
 
-INCS=-I$(GLFWDIR)/include/GLFW -I$(MOLTENVK)/include -I../cubesolver/
+#VULKANDIR=/Users/guillaume/dev/MoltenVK/Package/Debug/MoltenVK
+
+INCS=-I$(GLFWDIR)/include/GLFW -I$(VULKANINCPATH) -I../cubesolver/
 CXXFLAGS=-flto -Wall -W -g $(INCS) -std=c++14 -O2 -fno-exceptions
 LDFLAGS=-flto -O2 -L$(GLFWDIR)/src -L $(VULKANLIBPATH) -framework Cocoa -framework Metal -framework IOSurface -rpath $(VULKANLIBPATH) -lglfw -lvulkan
 
