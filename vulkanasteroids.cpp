@@ -103,36 +103,38 @@ class VulkanApp
         VkImageView view;
         uint32_t width;
         uint32_t height;
-        VkSampler sampler;
+        //VkSampler sampler;
 
         void cleanup(VkDevice device)
         {
             vkDestroyImageView(device, view, nullptr);
             vkFreeMemory(device, memory, nullptr);
             vkDestroyImage(device, image, nullptr);
-            vkDestroySampler(device, sampler, nullptr);
+            //vkDestroySampler(device, sampler, nullptr);
         }
     };
-    // We use the same layout for everything for now.
-    VkDescriptorSetLayout descriptorSetLayout;
 
     // Background
+    VkDescriptorSetLayout backgroundDescriptorLayout;
     Descriptor backgroundDescriptor;
     VkShaderModule backgroundVertexShader;
     VkShaderModule backgroundFragmentShader;
     VertexBuffer backgroundVertex;
-    Texture background;
+    Texture backgroundTexture;
     VkPipeline backgroundPipeline;
     VkPipelineLayout backgroundPipelineLayout;
+    VkSampler backgroundSampler;
 
     // Ship
+    VkDescriptorSetLayout shipDescriptorLayout;
     Descriptor shipDescriptor;
-    Texture ship;
     VkShaderModule shipVertexShader;
     VkShaderModule shipFragmentShader;
     VertexBuffer shipVertex;
+    Texture shipTextures[2];
     VkPipeline shipPipeline;
     VkPipelineLayout shipPipelineLayout;
+    VkSampler shipSampler;
     //MyMatrix shipTransform;
 
     class ShipState {
@@ -659,6 +661,7 @@ bool VulkanApp::initVulkanInstance() {
             printf(", %s", layerName);
         }
         if (0 == strcmp("VK_LAYER_LUNARG_standard_validation", layerName)
+          || 0 == strcmp("VK_LAYER_LUNARG_parameter_validation", layerName)
           || 0 == strcmp("VK_LAYER_LUNARG_core_validation", layerName)) {
             if (enableValidation)
                 enabledLayers.push_back(layerName);
@@ -1234,7 +1237,7 @@ bool VulkanApp::createRenderPass()
 bool VulkanApp::createDescriptorSetLayout()
 {
     // Right now we use only one layout for all - XXX may change later
-    VkDescriptorSetLayoutBinding layout[2];
+    VkDescriptorSetLayoutBinding layout[3];
     memset(layout, 0, sizeof(layout));
     layout[0].binding = 0;
     layout[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -1250,11 +1253,31 @@ bool VulkanApp::createDescriptorSetLayout()
 
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = sizeof(layout)/ sizeof(*layout);
+    layoutInfo.bindingCount = 2;
     layoutInfo.pBindings = layout;
 
-    VkResult vkRet = vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr,
-                                                 &descriptorSetLayout);
+    VkResult vkRet;
+    vkRet = vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr,
+                                        &backgroundDescriptorLayout);
+    if (vkRet != VK_SUCCESS) {
+        printf("vkCreateDescriptorSetLayout() failed with %d", vkRet);
+        return false;
+    }
+
+    layout[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    layout[2].binding = 2;
+    // number of ship textures XXX
+    layout[2].descriptorCount = 2;
+    layout[2].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    layout[2].pImmutableSamplers = nullptr;
+    layout[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 3;
+    layoutInfo.pBindings = layout;
+
+    vkRet = vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr,
+                                        &shipDescriptorLayout);
     if (vkRet != VK_SUCCESS) {
         printf("vkCreateDescriptorSetLayout() failed with %d", vkRet);
         return false;
@@ -1429,7 +1452,7 @@ bool VulkanApp::createPipelines()
     pipelineLayoutInfo.sType =
                             VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutInfo.setLayoutCount = 1;
-    pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
+    pipelineLayoutInfo.pSetLayouts = &backgroundDescriptorLayout;
     pipelineLayoutInfo.pushConstantRangeCount = 0;
     pipelineLayoutInfo.pPushConstantRanges = 0;
 
@@ -1465,7 +1488,7 @@ bool VulkanApp::createPipelines()
        return false;
     }
 
-    // Ship Layout
+    // Ship pipeline
     VkPushConstantRange pushConstantsRange = {};
     pushConstantsRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     pushConstantsRange.offset = 0;
@@ -1473,7 +1496,7 @@ bool VulkanApp::createPipelines()
 
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutInfo.setLayoutCount = 1;
-    pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
+    pipelineLayoutInfo.pSetLayouts = &shipDescriptorLayout;
     pipelineLayoutInfo.pushConstantRangeCount = 1;
     pipelineLayoutInfo.pPushConstantRanges = &pushConstantsRange;
 
@@ -1826,7 +1849,8 @@ bool VulkanApp::createVertexBuffers()
 {
     const float bottom = getMinY();
     const float top = bottom +
-                float(background.height) / float(background.width);
+                      float(backgroundTexture.height) /
+                      float(backgroundTexture.width);
     printf("top of texture %f\n", top);
     constexpr float z = 0.0f;
 
@@ -1858,8 +1882,18 @@ bool VulkanApp::createVertexBuffers()
 
     // ship
     v = &shipVertex.vertices;
-    const float x = ship.width / float(devInfo.extent.width) / 3.0f;
-    const float y = x * ship.height / ship.width;
+    float x = shipTextures[0].width / float(devInfo.extent.width) / 3.0f;
+    float y = x * shipTextures[0].height / shipTextures[0].width;
+    v->emplace_back(MyPoint{-x, -y, z}, red, 0.0f, 1.0f);
+    v->emplace_back(MyPoint{ x, -y, z}, red, 1.0f, 1.0f);
+    v->emplace_back(MyPoint{ x,  y, z}, red, 1.0f, 0.0f);
+    // 2nd
+    v->emplace_back(MyPoint{-x, -y, z}, red, 0.0f, 1.0f);
+    v->emplace_back(MyPoint{ x,  y, z}, red, 1.0f, 0.0f);
+    v->emplace_back(MyPoint{-x,  y, z}, red, 0.0f, 0.0f);
+    // engine effect
+    x = shipTextures[1].width / float(devInfo.extent.width) / 3.0f;
+    y = x * shipTextures[1].height / shipTextures[1].width;
     v->emplace_back(MyPoint{-x, -y, z}, red, 0.0f, 1.0f);
     v->emplace_back(MyPoint{ x, -y, z}, red, 1.0f, 1.0f);
     v->emplace_back(MyPoint{ x,  y, z}, red, 1.0f, 0.0f);
@@ -1935,7 +1969,7 @@ bool VulkanApp::createBackgroundDescriptor()
     VkDescriptorPoolSize poolSizes[2];
     memset(&poolSizes, 0, sizeof(poolSizes));
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSizes[0].descriptorCount = 2;
+    poolSizes[0].descriptorCount = 1;
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[1].descriptorCount = 1;
 
@@ -1952,12 +1986,11 @@ bool VulkanApp::createBackgroundDescriptor()
         return false;
     }
 
-    VkDescriptorSetLayout layouts[] = {descriptorSetLayout};
     VkDescriptorSetAllocateInfo allocInfo = {};
     allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     allocInfo.descriptorPool = backgroundDescriptor.pool;
     allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = layouts;
+    allocInfo.pSetLayouts = &backgroundDescriptorLayout;
 
     vkRet = vkAllocateDescriptorSets(device, &allocInfo,
                                      &backgroundDescriptor.set);
@@ -1974,8 +2007,8 @@ bool VulkanApp::createBackgroundDescriptor()
 
     VkDescriptorImageInfo imageInfo = {};
     imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    imageInfo.imageView = background.view;
-    imageInfo.sampler = background.sampler;
+    imageInfo.imageView = backgroundTexture.view;
+    imageInfo.sampler = backgroundSampler;
 
     VkWriteDescriptorSet descriptorWrite[2];
     memset(descriptorWrite, 0, sizeof(descriptorWrite));
@@ -2004,12 +2037,14 @@ bool VulkanApp::createBackgroundDescriptor()
 
 bool VulkanApp::createShipDescriptor()
 {
-    VkDescriptorPoolSize poolSizes[2];
+    VkDescriptorPoolSize poolSizes[3];
     memset(&poolSizes, 0, sizeof(poolSizes));
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSizes[0].descriptorCount = 2;
-    poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[0].descriptorCount = 1;
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLER;
     poolSizes[1].descriptorCount = 1;
+    poolSizes[2].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    poolSizes[2].descriptorCount = 2; // XXX num textures
 
     VkDescriptorPoolCreateInfo poolInfo = {};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -2024,15 +2059,13 @@ bool VulkanApp::createShipDescriptor()
         return false;
     }
 
-    VkDescriptorSetLayout layouts[] = {descriptorSetLayout};
     VkDescriptorSetAllocateInfo allocInfo = {};
     allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     allocInfo.descriptorPool = shipDescriptor.pool;
     allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = layouts;
+    allocInfo.pSetLayouts = &shipDescriptorLayout;
 
-    vkRet = vkAllocateDescriptorSets(device, &allocInfo,
-                                     &shipDescriptor.set);
+    vkRet = vkAllocateDescriptorSets(device, &allocInfo, &shipDescriptor.set);
     if (vkRet != VK_SUCCESS) {
         printf("vkAllocateDescriptorSets failed with %d\n", vkRet);
         return false;
@@ -2044,12 +2077,21 @@ bool VulkanApp::createShipDescriptor()
     bufferInfo[0].offset = 0;
     bufferInfo[0].range = sizeof(vp);
 
-    VkDescriptorImageInfo imageInfo = {};
-    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    imageInfo.imageView = ship.view;
-    imageInfo.sampler = ship.sampler;
+    VkDescriptorImageInfo samplerImageInfo = {};
+    samplerImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    samplerImageInfo.imageView = nullptr;
+    samplerImageInfo.sampler = shipSampler;
 
-    VkWriteDescriptorSet descriptorWrite[2];
+    VkDescriptorImageInfo textureImageInfo[2]; // XXX num textures
+    memset(textureImageInfo, 0, sizeof(textureImageInfo));
+    for (uint32_t i = 0; i < 2; ++i) {
+        textureImageInfo[i].imageLayout =
+                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        textureImageInfo[i].imageView = shipTextures[i].view;
+        textureImageInfo[i].sampler = nullptr;
+    }
+
+    VkWriteDescriptorSet descriptorWrite[3];
     memset(descriptorWrite, 0, sizeof(descriptorWrite));
     descriptorWrite[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     descriptorWrite[0].dstSet = shipDescriptor.set;
@@ -2058,14 +2100,25 @@ bool VulkanApp::createShipDescriptor()
     descriptorWrite[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     descriptorWrite[0].descriptorCount = 1;
     descriptorWrite[0].pBufferInfo = bufferInfo;
+
     descriptorWrite[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     descriptorWrite[1].dstSet = shipDescriptor.set;
     descriptorWrite[1].dstBinding = 1;
     descriptorWrite[1].dstArrayElement = 0;
     descriptorWrite[1].descriptorType =
-                                    VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                                    //VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                                    VK_DESCRIPTOR_TYPE_SAMPLER;
     descriptorWrite[1].descriptorCount = 1;
-    descriptorWrite[1].pImageInfo = &imageInfo;
+    descriptorWrite[1].pImageInfo = &samplerImageInfo;
+
+    descriptorWrite[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrite[2].dstSet = shipDescriptor.set;
+    descriptorWrite[2].dstBinding = 2;
+    descriptorWrite[2].dstArrayElement = 0;
+    descriptorWrite[2].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    // XXX mnum textures
+    descriptorWrite[2].descriptorCount = 2;
+    descriptorWrite[2].pImageInfo = textureImageInfo;
 
     vkUpdateDescriptorSets(device,
                            sizeof(descriptorWrite)/sizeof(*descriptorWrite),
@@ -2292,8 +2345,12 @@ void VulkanApp::cleanupSwapChain()
         //vkFreeMemory(device, swpe.depthImageMemory, nullptr);
         //vkDestroyImage(device, swpe.depthImage, nullptr);
     }
-    background.cleanup(device);
-    ship.cleanup(device);
+    backgroundTexture.cleanup(device);
+    vkDestroySampler(device, backgroundSampler, nullptr);
+    for (uint32_t i = 0 ; i < 2; ++i) {
+        shipTextures[i].cleanup(device);
+    }
+    vkDestroySampler(device, shipSampler, nullptr);
 
     vkDestroySwapchainKHR(device, vkSwapChain, nullptr);
 }
@@ -2316,7 +2373,8 @@ void VulkanApp::cleanup()
 
     vkDestroyDescriptorPool(device, backgroundDescriptor.pool, nullptr);
     vkDestroyDescriptorPool(device, shipDescriptor.pool, nullptr);
-    vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
+    vkDestroyDescriptorSetLayout(device, backgroundDescriptorLayout, nullptr);
+    vkDestroyDescriptorSetLayout(device, shipDescriptorLayout, nullptr);
 
     vkDestroySurfaceKHR(instance, surface, nullptr);
     vkDestroyDevice(device, nullptr);
@@ -2486,6 +2544,15 @@ bool VulkanApp::createTexture(struct Texture *texture,
         return false;
     }
 
+    return true;
+}
+
+bool VulkanApp::createTextures() {
+    if (!createTexture(&backgroundTexture, "assets/background.png")
+     || !createTexture(shipTextures, "assets/ship.png")
+     || !createTexture(shipTextures + 1, "assets/engine1.png"))
+        return false;
+
     VkSamplerCreateInfo samplerInfo = {};
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
     samplerInfo.magFilter = VK_FILTER_LINEAR;
@@ -2504,19 +2571,17 @@ bool VulkanApp::createTexture(struct Texture *texture,
     samplerInfo.minLod = 0.0f;
     samplerInfo.maxLod = 0.0f;
 
-    vkRet = vkCreateSampler(device, &samplerInfo, nullptr, &texture->sampler);
+    VkResult vkRet;
+    vkRet = vkCreateSampler(device, &samplerInfo, nullptr, &backgroundSampler);
     if (vkRet != VK_SUCCESS) {
         printf("vkCreateSampler failed with %d\n", vkRet);
         return false;
     }
-
-    return true;
-}
-
-bool VulkanApp::createTextures() {
-    if (!createTexture(&background, "assets/background.png")
-     || !createTexture(&ship, "assets/ship.png"))
+    vkRet = vkCreateSampler(device, &samplerInfo, nullptr, &shipSampler);
+    if (vkRet != VK_SUCCESS) {
+        printf("vkCreateSampler failed with %d\n", vkRet);
         return false;
+    }
     return true;
 }
 

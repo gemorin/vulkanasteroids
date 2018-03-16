@@ -10,6 +10,10 @@ VULKANINCPATH=$(VULKANDIR)/MoltenVK/include
 VULKANLIBPATH=$(VULKANDIR)/macOS/lib
 
 #VULKANDIR=/Users/guillaume/dev/MoltenVK/Package/Debug/MoltenVK
+VULKANDIR=/Users/guillaume/dev/Vulkan-LoaderAndValidationLayers
+VULKANINCPATH=$(VULKANDIR)/external/MoltenVK/Package/Debug/MoltenVK/include/
+VULKANLIBPATH=$(VULKANDIR)/build/loader
+SHADERCOMPILER=/Users/guillaume/dev/vulkansdk-macos-1.0.69.0/macOS/bin/glslc
 
 INCS=-I$(GLFWDIR)/include/GLFW -I$(VULKANINCPATH) -I../cubesolver/
 CXXFLAGS=-flto -Wall -W -g $(INCS) -std=c++14 -O2 -fno-exceptions
