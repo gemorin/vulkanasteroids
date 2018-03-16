@@ -152,6 +152,8 @@ class VulkanApp
         bool inRotation = false;
 
       public:
+        ShipState() { orientation.rotateZ(M_PI); }
+
         void initiateRotation(bool pos, double currentTime);
         void updateOrientation(double currentTime, GLFWwindow *window);
         void updatePosition(double currentTime, VulkanApp *app);
@@ -1419,7 +1421,6 @@ bool VulkanApp::createPipelines()
                                           VK_COLOR_COMPONENT_G_BIT |
                                           VK_COLOR_COMPONENT_B_BIT |
                                           VK_COLOR_COMPONENT_A_BIT;
-    // no alpha blending
     colorBlendAttachment.blendEnable = VK_TRUE;
     colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
     colorBlendAttachment.dstColorBlendFactor =
@@ -1489,16 +1490,20 @@ bool VulkanApp::createPipelines()
     }
 
     // Ship pipeline
-    VkPushConstantRange pushConstantsRange = {};
-    pushConstantsRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-    pushConstantsRange.offset = 0;
-    pushConstantsRange.size = sizeof(MyMatrix);
+    VkPushConstantRange pushConstantsRanges[2];
+    memset(&pushConstantsRanges, 0, sizeof(pushConstantsRanges));
+    pushConstantsRanges[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pushConstantsRanges[0].offset = 0;
+    pushConstantsRanges[0].size = sizeof(MyMatrix);
+    pushConstantsRanges[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    pushConstantsRanges[1].offset = sizeof(MyMatrix);
+    pushConstantsRanges[1].size = sizeof(int);
 
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutInfo.setLayoutCount = 1;
     pipelineLayoutInfo.pSetLayouts = &shipDescriptorLayout;
-    pipelineLayoutInfo.pushConstantRangeCount = 1;
-    pipelineLayoutInfo.pPushConstantRanges = &pushConstantsRange;
+    pipelineLayoutInfo.pushConstantRangeCount = 2;
+    pipelineLayoutInfo.pPushConstantRanges = pushConstantsRanges;
 
     vkRet = vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr,
                                    &shipPipelineLayout);
@@ -1892,16 +1897,29 @@ bool VulkanApp::createVertexBuffers()
     v->emplace_back(MyPoint{ x,  y, z}, red, 1.0f, 0.0f);
     v->emplace_back(MyPoint{-x,  y, z}, red, 0.0f, 0.0f);
     // engine effect
-    x = shipTextures[1].width / float(devInfo.extent.width) / 3.0f;
-    y = x * shipTextures[1].height / shipTextures[1].width;
-    v->emplace_back(MyPoint{-x, -y, z}, red, 0.0f, 1.0f);
-    v->emplace_back(MyPoint{ x, -y, z}, red, 1.0f, 1.0f);
-    v->emplace_back(MyPoint{ x,  y, z}, red, 1.0f, 0.0f);
-    // 2nd
-    v->emplace_back(MyPoint{-x, -y, z}, red, 0.0f, 1.0f);
-    v->emplace_back(MyPoint{ x,  y, z}, red, 1.0f, 0.0f);
-    v->emplace_back(MyPoint{-x,  y, z}, red, 0.0f, 0.0f);
+    float xscale = -2.0f * getMinX() / float(devInfo.extent.width);
+    float yscale = -2.0f * getMinY() / float(devInfo.extent.height);
+    //x = shipTextures[1].width / 2.0f; //float(devInfo.extent.width) / 1.0f;
+    //float ytop = -y;
+    //float ybot = ytop - shipTextures[1].height / 2.0f;//shipTextures[1].width;
 
+    x = xscale * float(shipTextures[1].width) / 2.0f;
+    float ybot = y;
+    float ytop = ybot + yscale * float(shipTextures[1].height);
+    printf("minX %f minY %f\n", getMinX(), getMinY());
+    printf("xscale %f yscale %f\n", xscale, yscale);
+    printf("%f < x < %f (diff %f), %f < y < %f (diff %f)\n",
+           -x, x, 2.0f * x, ybot, ytop, ytop - ybot);
+
+    v->emplace_back(MyPoint{-x, ybot, z}, red, 0.0f, 1.0f);
+    v->emplace_back(MyPoint{ x, ybot, z}, red, 1.0f, 1.0f);
+    v->emplace_back(MyPoint{ x, ytop, z}, red, 1.0f, 0.0f);
+    // 2nd
+    v->emplace_back(MyPoint{-x, ybot, z}, red, 0.0f, 1.0f);
+    v->emplace_back(MyPoint{ x, ytop, z}, red, 1.0f, 0.0f);
+    v->emplace_back(MyPoint{-x, ytop, z}, red, 0.0f, 0.0f);
+
+    printf("%lu\n", v->size());
     numBytes = v->size() * sizeof(*v->data());
     if (!createBuffer(&shipVertex.buffer, &shipVertex.memory,
                       numBytes, vertexUsage, memFlags, false)) {
@@ -2186,10 +2204,21 @@ bool VulkanApp::resetCommandBuffer(uint32_t i)
 
     vkCmdDraw(b, backgroundVertex.vertices.size(), 1, 0, 0);
 
+    //MyMatrix shipTransform = shipState.getTransform();
+    //struct {
+    //    MyMatrix shipTransform;
+    //    int texIdx;
+    //} push;
+    //push.shipTransform = shipState.getTransform();
+    //push.texIdx = 0;
     MyMatrix shipTransform = shipState.getTransform();
     vkCmdPushConstants(b, shipPipelineLayout,
                        VK_SHADER_STAGE_VERTEX_BIT, 0,
                        sizeof(shipTransform), &shipTransform);
+    int idx = 0;
+    vkCmdPushConstants(b, shipPipelineLayout,
+                       VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(shipTransform),
+                       sizeof(idx), &idx);
     vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
                       shipPipeline);
 
@@ -2200,7 +2229,14 @@ bool VulkanApp::resetCommandBuffer(uint32_t i)
                             shipPipelineLayout, 0, 1,
                             &shipDescriptor.set, 0, nullptr);
 
-    vkCmdDraw(b, shipVertex.vertices.size(), 1, 0, 0);
+    vkCmdDraw(b, 6, 1, 0, 0);
+    if (GLFW_PRESS == glfwGetKey(window, GLFW_KEY_UP)) {
+        idx = 1;
+        vkCmdPushConstants(b, shipPipelineLayout,
+                           VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(shipTransform),
+                           sizeof(idx), &idx);
+        vkCmdDraw(b, 6, 1, 6, 0);
+    }
 
     vkCmdEndRenderPass(b);
 
@@ -2550,8 +2586,11 @@ bool VulkanApp::createTexture(struct Texture *texture,
 bool VulkanApp::createTextures() {
     if (!createTexture(&backgroundTexture, "assets/background.png")
      || !createTexture(shipTextures, "assets/ship.png")
-     || !createTexture(shipTextures + 1, "assets/engine1.png"))
+     || !createTexture(shipTextures + 1, "assets/engine1.png")) {
         return false;
+    }
+    printf("0 %ux%u\n", shipTextures[0].width, shipTextures[0].height);
+    printf("1 %ux%u\n", shipTextures[1].width, shipTextures[1].height);
 
     VkSamplerCreateInfo samplerInfo = {};
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;

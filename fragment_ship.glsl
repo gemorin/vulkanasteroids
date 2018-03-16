@@ -15,4 +15,5 @@ layout(push_constant) uniform PushConsts {
 
 void main() {
     outColor = texture(sampler2D(shipTextures[pushConsts.idx], s), uv);
+    //outColor = vec4(color, 1.0);
 }
