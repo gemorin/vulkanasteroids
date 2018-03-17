@@ -54,10 +54,12 @@ class VulkanApp
         VkImage image;
         VkImageView view;
 
+#ifdef MSAA
         // Anti aliasing stuff
         VkImage msaaImage;
         VkDeviceMemory msaaMemory;
         VkImageView msaaView;
+#endif
 
         //VkImage depthImage;
         //VkDeviceMemory depthImageMemory;
@@ -1033,6 +1035,7 @@ bool VulkanApp::createSwapChain()
             return false;
         }
 
+#ifdef MSAA
         // MSAA init
         VkImageCreateInfo info = {};
         info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -1095,6 +1098,7 @@ bool VulkanApp::createSwapChain()
             printf("vkCreateImageView failed with %d\n", vkRet);
             return false;
         }
+#endif
     }
     return true;
 }
@@ -1154,15 +1158,24 @@ bool VulkanApp::createRenderPass()
     VkAttachmentDescription attachments[2];
     memset(&attachments, 0, sizeof(attachments));
     attachments[0].format = devInfo.format.format;
-    attachments[0].samples = VK_SAMPLE_COUNT_4_BIT;
     attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+#ifdef MSAA
+    attachments[0].samples = VK_SAMPLE_COUNT_4_BIT;
     // Don't write to memory, we just want to compute
     attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+#else
+    attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
+    attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+#endif
     attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+#ifdef MSAA
     // this does not go to the presentation
     attachments[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+#else
+    attachments[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+#endif
 
     attachments[1].format = devInfo.format.format;
     attachments[1].samples = VK_SAMPLE_COUNT_1_BIT; // required for resolve
@@ -1191,9 +1204,11 @@ bool VulkanApp::createRenderPass()
     colorRef.attachment = 0;
     colorRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
+#ifdef MSAA
     VkAttachmentReference resolveRef = {};
     resolveRef.attachment = 1;
     resolveRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+#endif
 
 #if 0
     VkAttachmentReference depthRef = {};
@@ -1206,7 +1221,11 @@ bool VulkanApp::createRenderPass()
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.colorAttachmentCount = 1;
     subpass.pColorAttachments = &colorRef;
+#ifdef MSAA
     subpass.pResolveAttachments = &resolveRef;
+#else
+    subpass.pResolveAttachments = nullptr;
+#endif
     subpass.pDepthStencilAttachment = nullptr;
 
     VkSubpassDependency dependency = {};
@@ -1220,7 +1239,11 @@ bool VulkanApp::createRenderPass()
 
     VkRenderPassCreateInfo renderPassInfo = {};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+#ifdef MSAA
     renderPassInfo.attachmentCount = 2;
+#else
+    renderPassInfo.attachmentCount = 1;
+#endif
     renderPassInfo.pAttachments = attachments;
     renderPassInfo.subpassCount = 1;
     renderPassInfo.pSubpasses = &subpass;
@@ -1381,7 +1404,7 @@ bool VulkanApp::createPipelines()
     // Try VK_POLYGON_MODE_LINE, VK_POLYGON_MODE_POINT
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
     rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rasterizer.depthBiasEnable = VK_FALSE;
     rasterizer.depthBiasConstantFactor = 0.0f;
@@ -1392,8 +1415,13 @@ bool VulkanApp::createPipelines()
     VkPipelineMultisampleStateCreateInfo multisampling = {};
     multisampling.sType =
                       VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+#ifdef MSAA
     multisampling.sampleShadingEnable = VK_FALSE;
     multisampling.rasterizationSamples = VK_SAMPLE_COUNT_4_BIT;
+#else
+    multisampling.sampleShadingEnable = VK_FALSE;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+#endif
     multisampling.minSampleShading = 1.0f;
     multisampling.pSampleMask = nullptr;
     multisampling.alphaToCoverageEnable = VK_FALSE;
@@ -1422,13 +1450,14 @@ bool VulkanApp::createPipelines()
                                           VK_COLOR_COMPONENT_B_BIT |
                                           VK_COLOR_COMPONENT_A_BIT;
     colorBlendAttachment.blendEnable = VK_TRUE;
-    colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-    colorBlendAttachment.dstColorBlendFactor =
-                                           VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
-    colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-    colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    //colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    // Premultiplied
+    colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
     colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
                                           VK_COLOR_COMPONENT_G_BIT |
                                           VK_COLOR_COMPONENT_B_BIT |
@@ -1541,15 +1570,18 @@ bool VulkanApp::createFrameBuffers()
 {
     frameBuffers.resize(swapChain.size());
     for (unsigned i = 0; i != swapChain.size(); ++i) {
+#ifdef MSAA
         VkImageView attachments[] = { swapChain[i].msaaView,
                                       swapChain[i].view,
-
-                                      //swapChain[i].depthImageView
                                     };
+#else
+        VkImageView attachments[] = { swapChain[i].view, };
+#endif
         VkFramebufferCreateInfo framebufferInfo = {};
         framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         framebufferInfo.renderPass = renderPass;
-        framebufferInfo.attachmentCount = 2;
+        framebufferInfo.attachmentCount = sizeof(attachments)/
+                                          sizeof(*attachments);
         framebufferInfo.pAttachments = attachments;
         framebufferInfo.width = devInfo.extent.width;
         framebufferInfo.height = devInfo.extent.height;
@@ -1887,8 +1919,12 @@ bool VulkanApp::createVertexBuffers()
 
     // ship
     v = &shipVertex.vertices;
-    float x = shipTextures[0].width / float(devInfo.extent.width) / 3.0f;
-    float y = x * shipTextures[0].height / shipTextures[0].width;
+    float scale = 0.8f;
+    float xscale = -2.0f * getMinX() / float(devInfo.extent.width) * scale;
+    float yscale = -2.0f * getMinY() / float(devInfo.extent.height) * scale;
+    float x = float(shipTextures[0].width) * xscale / 2.0f;
+    //float y = x * shipTextures[0].height / shipTextures[0].width;
+    float y = yscale * float(shipTextures[0].height) / 2.0f;
     v->emplace_back(MyPoint{-x, -y, z}, red, 0.0f, 1.0f);
     v->emplace_back(MyPoint{ x, -y, z}, red, 1.0f, 1.0f);
     v->emplace_back(MyPoint{ x,  y, z}, red, 1.0f, 0.0f);
@@ -1897,15 +1933,18 @@ bool VulkanApp::createVertexBuffers()
     v->emplace_back(MyPoint{ x,  y, z}, red, 1.0f, 0.0f);
     v->emplace_back(MyPoint{-x,  y, z}, red, 0.0f, 0.0f);
     // engine effect
-    float xscale = -2.0f * getMinX() / float(devInfo.extent.width);
-    float yscale = -2.0f * getMinY() / float(devInfo.extent.height);
+    //float xscale = -2.0f * getMinX() / float(devInfo.extent.width);
+    //float yscale = -2.0f * getMinY() / float(devInfo.extent.height);
     //x = shipTextures[1].width / 2.0f; //float(devInfo.extent.width) / 1.0f;
     //float ytop = -y;
     //float ybot = ytop - shipTextures[1].height / 2.0f;//shipTextures[1].width;
 
-    x = xscale * float(shipTextures[1].width) / 2.0f;
+    scale = 1.0f;
+    x = xscale * float(shipTextures[1].width) / 2.0f * scale;
+    float ysize = yscale * float(shipTextures[1].height) * scale;
     float ybot = y;
-    float ytop = ybot + yscale * float(shipTextures[1].height);
+    float ytop = ybot + ysize;
+    printf("width %u height %u\n", devInfo.extent.width, devInfo.extent.height);
     printf("minX %f minY %f\n", getMinX(), getMinY());
     printf("xscale %f yscale %f\n", xscale, yscale);
     printf("%f < x < %f (diff %f), %f < y < %f (diff %f)\n",
@@ -2180,15 +2219,15 @@ bool VulkanApp::resetCommandBuffer(uint32_t i)
     renderPassInfo.renderArea.offset = {0, 0};
     renderPassInfo.renderArea.extent = devInfo.extent;
 
-    VkClearValue clearColor[3] = {};
+    VkClearValue clearColor[1] = {};
     memset(clearColor, 0, sizeof(clearColor));
-    //clearColor[0].color.float32[0] = 210.0f / 255.0f;
-    //clearColor[0].color.float32[1] = 230.0f / 255.0f;
-    //clearColor[0].color.float32[2] = 255.0f / 255.0f;
-    //clearColor[0].color.float32[3] = 1.0f;
+    clearColor[0].color.float32[0] = 0.0f;
+    clearColor[0].color.float32[1] = 0.0f;
+    clearColor[0].color.float32[2] = 0.0f;
+    clearColor[0].color.float32[3] = 1.0f;
     //clearColor[1] is for the resolve attachment
-    clearColor[2].depthStencil = {1.0f, 0};
-    renderPassInfo.clearValueCount = 3;
+    //clearColor[2].depthStencil = {1.0f, 0};
+    renderPassInfo.clearValueCount = 1;
     renderPassInfo.pClearValues = clearColor;
 
     vkCmdBeginRenderPass(b, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
@@ -2374,9 +2413,11 @@ void VulkanApp::cleanupSwapChain()
         vkDestroyImageView(device, swpe.view, nullptr);
         // Note that the swpe.image is owned by and will be deallocated
         // through vkSwapChain
+#ifdef MSAA
         vkDestroyImageView(device, swpe.msaaView, nullptr);
         vkFreeMemory(device, swpe.msaaMemory, nullptr);
         vkDestroyImage(device, swpe.msaaImage, nullptr);
+#endif
         //vkDestroyImageView(device, swpe.depthImageView, nullptr);
         //vkFreeMemory(device, swpe.depthImageMemory, nullptr);
         //vkDestroyImage(device, swpe.depthImage, nullptr);
@@ -2506,7 +2547,7 @@ bool VulkanApp::createTexture(struct Texture *texture,
 
     void* data;
     vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
-        memcpy(data, pixels, static_cast<size_t>(imageSize));
+    memcpy(data, pixels, static_cast<size_t>(imageSize));
     vkUnmapMemory(device, stagingBufferMemory);
     stbi_image_free(pixels);
     texture->width = texWidth;
