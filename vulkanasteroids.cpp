@@ -201,6 +201,7 @@ class VulkanApp
             return ret;
         }
         MyAABB2 getAABB(float *) const;
+        void update(const VulkanApp *app);
     };
     constexpr static uint32_t maxNumAsteroids = 4;
     vector<AsteroidState> asteroidStates;
@@ -212,7 +213,6 @@ class VulkanApp
 
     VkCommandPool commandPool;
     vector<VkCommandBuffer> commandBuffers;
-    //vector<bool> commandBuffersDirty;
 
     struct __attribute__((packed)) VpUniform {
         MyMatrix view;
@@ -454,6 +454,24 @@ MyAABB2 VulkanApp::AsteroidState::getAABB(float *sizes) const
     a.min.y = max(0.0f, position.y - sizes[1] / 2.0f);
     a.max.y = max(0.0f, position.y + sizes[1] / 2.0f);
     return a;
+}
+
+void VulkanApp::AsteroidState::update(const VulkanApp *app)
+{
+    position += velocity;
+
+    if (position.x > -app->getMinX()) {
+        position.x = app->getMinX();
+    }
+    else if (position.x < app->getMinX()) {
+        position.x = -app->getMinX();
+    }
+    if (position.y > -app->getMinY()) {
+        position.y = app->getMinY();
+    }
+    else if (position.y < app->getMinY()) {
+        position.y = -app->getMinY();
+    }
 }
 
 VulkanApp::VulkanApp()
@@ -2399,6 +2417,18 @@ void VulkanApp::spawnNewAsteroid()
 
         if (newAsteroidAABB.overlap(shipState.getAABB(shipSize)))
             continue;
+        
+        // Generate velocity
+        MyPoint direction(0.0f, -1.0f, 0.0f);
+        uniform_real_distribution<float> angle(M_PI/-2.0f, M_PI/2.0f);
+
+        MyQuaternion rot;
+        rot.rotateZ(angle(randomGen));
+        MyPoint v = direction.transform(rot);
+        v.normalize();
+        v *= 0.0002f;
+
+        newAsteroid.velocity = v;
 
         asteroidStates.push_back(newAsteroid);
         break;
@@ -2434,10 +2464,12 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime)
     if (asteroidStates.size() < maxNumAsteroids) {
         if (currentTime > (lastSpawnRandCheck + 1.0)) {
             lastSpawnRandCheck = currentTime;
-            if (asteroidSpawnRand(randomGen) == 1)
+            if (asteroidStates.empty() || asteroidSpawnRand(randomGen) == 1)
                 spawnNewAsteroid();
         }
     }
+    for (AsteroidState& a : asteroidStates)
+        a.update(this);
     shipState.update(currentTime, this);
 
     resetCommandBuffer(idx);
