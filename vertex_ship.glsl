@@ -16,11 +16,11 @@ layout(binding = 0) uniform UniformMvp {
     mat4 proj;
 } mvp;
 layout(push_constant) uniform PushConsts {
-	mat4 transform;
+	mat4 transform[4];
 } pushConsts;
 
 void main() {
-    mat4 m = mvp.proj * mvp.view * pushConsts.transform;
+    mat4 m = mvp.proj * mvp.view * pushConsts.transform[gl_InstanceIndex];
     gl_Position = m * vec4(position, 1.0);
 
     uv = inUv;

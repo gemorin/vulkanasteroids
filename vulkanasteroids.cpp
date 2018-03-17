@@ -204,6 +204,7 @@ class VulkanApp
         void update(const VulkanApp *app);
     };
     constexpr static uint32_t maxNumAsteroids = 4;
+    constexpr static uint32_t vertexPushConstantsSize = maxNumAsteroids * sizeof(MyMatrix);
     vector<AsteroidState> asteroidStates;
     float asteroidSize[2];
     uniform_int_distribution<> asteroidSpawnRand{1, 30};
@@ -1610,9 +1611,9 @@ bool VulkanApp::createPipelines()
     memset(&pushConstantsRanges, 0, sizeof(pushConstantsRanges));
     pushConstantsRanges[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     pushConstantsRanges[0].offset = 0;
-    pushConstantsRanges[0].size = sizeof(MyMatrix);
+    pushConstantsRanges[0].size = vertexPushConstantsSize;
     pushConstantsRanges[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-    pushConstantsRanges[1].offset = sizeof(MyMatrix);
+    pushConstantsRanges[1].offset = vertexPushConstantsSize;
     pushConstantsRanges[1].size = sizeof(int);
 
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -2361,7 +2362,8 @@ bool VulkanApp::resetCommandBuffer(uint32_t i)
                        sizeof(shipTransform), &shipTransform);
     int idx = 0;
     vkCmdPushConstants(b, shipPipelineLayout,
-                       VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(shipTransform),
+                       VK_SHADER_STAGE_FRAGMENT_BIT,
+                       vertexPushConstantsSize,
                        sizeof(idx), &idx);
 
 
@@ -2376,7 +2378,8 @@ bool VulkanApp::resetCommandBuffer(uint32_t i)
     if (GLFW_PRESS == glfwGetKey(window, GLFW_KEY_UP)) {
         idx = 1;
         vkCmdPushConstants(b, shipPipelineLayout,
-                           VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(shipTransform),
+                           VK_SHADER_STAGE_FRAGMENT_BIT,
+                           vertexPushConstantsSize,
                            sizeof(idx), &idx);
         vkCmdDraw(b, 6, 1, 6, 0);
     }
@@ -2387,7 +2390,8 @@ bool VulkanApp::resetCommandBuffer(uint32_t i)
                            VK_SHADER_STAGE_VERTEX_BIT, 0,
                            sizeof(transform), &transform);
         vkCmdPushConstants(b, shipPipelineLayout,
-                           VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(shipTransform),
+                           VK_SHADER_STAGE_FRAGMENT_BIT,
+                           vertexPushConstantsSize,
                            sizeof(idx), &idx);
         vkCmdDraw(b, 6, 1, 12, 0);
     }
