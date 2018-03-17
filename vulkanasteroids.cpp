@@ -202,8 +202,11 @@ class VulkanApp
         }
         MyAABB2 getAABB(float *) const;
     };
+    constexpr static uint32_t maxNumAsteroids = 4;
     vector<AsteroidState> asteroidStates;
     float asteroidSize[2];
+    uniform_int_distribution<> asteroidSpawnRand{1, 30};
+    double lastSpawnRandCheck = 0.0;
 
     vector<VkFramebuffer> frameBuffers;
 
@@ -818,7 +821,6 @@ void VulkanApp::updateExtent()
     devInfo.extent.height = height;
     const float aspect = (float) height / (float) width;
     minY = -aspect / 2.0f;
-    printf("bottom is %f\n", minY);
 }
 
 bool VulkanApp::choosePhysicalDevice()
@@ -2429,10 +2431,15 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime)
         }
     }
 #endif
-    shipState.update(currentTime, this);
-    if (asteroidStates.size() != 1) {
-        spawnNewAsteroid();
+    if (asteroidStates.size() < maxNumAsteroids) {
+        if (currentTime > (lastSpawnRandCheck + 1.0)) {
+            lastSpawnRandCheck = currentTime;
+            if (asteroidSpawnRand(randomGen) == 1)
+                spawnNewAsteroid();
+        }
     }
+    shipState.update(currentTime, this);
+
     resetCommandBuffer(idx);
 
     VkResult vkRet;
