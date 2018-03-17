@@ -13,7 +13,7 @@
 #include "stb_image.h"
 #pragma clang diagnostic pop
 
-#include <cube.h>
+#include "mymath.h"
 
 using namespace std;
 
