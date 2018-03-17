@@ -2356,16 +2356,17 @@ bool VulkanApp::resetCommandBuffer(uint32_t i)
     //push.texIdx = 0;
     vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
                       shipPipeline);
-    MyMatrix shipTransform = shipState.getTransform();
-    vkCmdPushConstants(b, shipPipelineLayout,
-                       VK_SHADER_STAGE_VERTEX_BIT, 0,
-                       sizeof(shipTransform), &shipTransform);
-    int idx = 0;
-    vkCmdPushConstants(b, shipPipelineLayout,
-                       VK_SHADER_STAGE_FRAGMENT_BIT,
-                       vertexPushConstantsSize,
-                       sizeof(idx), &idx);
-
+    {
+        MyMatrix shipTransform = shipState.getTransform();
+        vkCmdPushConstants(b, shipPipelineLayout,
+                           VK_SHADER_STAGE_VERTEX_BIT, 0,
+                           sizeof(shipTransform), &shipTransform);
+        int idx = 0;
+        vkCmdPushConstants(b, shipPipelineLayout,
+                           VK_SHADER_STAGE_FRAGMENT_BIT,
+                           vertexPushConstantsSize,
+                           sizeof(idx), &idx);
+    }
 
     buffers[0] = {shipVertex.buffer};
     offsets[0] = {0};
@@ -2376,7 +2377,7 @@ bool VulkanApp::resetCommandBuffer(uint32_t i)
 
     vkCmdDraw(b, 6, 1, 0, 0);
     if (GLFW_PRESS == glfwGetKey(window, GLFW_KEY_UP)) {
-        idx = 1;
+        int idx = 1;
         vkCmdPushConstants(b, shipPipelineLayout,
                            VK_SHADER_STAGE_FRAGMENT_BIT,
                            vertexPushConstantsSize,
@@ -2384,16 +2385,19 @@ bool VulkanApp::resetCommandBuffer(uint32_t i)
         vkCmdDraw(b, 6, 1, 6, 0);
     }
     if (!asteroidStates.empty()) {
-        MyMatrix transform = asteroidStates[0].getTransform();
-        idx = 2;
+        MyMatrix transforms[asteroidStates.size()];
+        for (uint32_t i = 0 ; i < asteroidStates.size(); ++i)
+            transforms[i] = asteroidStates[i].getTransform();
+
         vkCmdPushConstants(b, shipPipelineLayout,
                            VK_SHADER_STAGE_VERTEX_BIT, 0,
-                           sizeof(transform), &transform);
+                           sizeof(transforms), transforms);
+        int idx = 2;
         vkCmdPushConstants(b, shipPipelineLayout,
                            VK_SHADER_STAGE_FRAGMENT_BIT,
                            vertexPushConstantsSize,
                            sizeof(idx), &idx);
-        vkCmdDraw(b, 6, 1, 12, 0);
+        vkCmdDraw(b, 6, asteroidStates.size(), 12, 0);
     }
 
     vkCmdEndRenderPass(b);
@@ -2421,20 +2425,23 @@ void VulkanApp::spawnNewAsteroid()
 
         if (newAsteroidAABB.overlap(shipState.getAABB(shipSize)))
             continue;
-        
+
         // Generate velocity
-        MyPoint direction(0.0f, -1.0f, 0.0f);
-        uniform_real_distribution<float> angle(M_PI/-2.0f, M_PI/2.0f);
+        MyPoint direction(0.0f, 1.0f, 0.0f);
+        uniform_real_distribution<float> angle(-M_PI, M_PI);
 
         MyQuaternion rot;
         rot.rotateZ(angle(randomGen));
         MyPoint v = direction.transform(rot);
         v.normalize();
-        v *= 0.0002f;
+
+        uniform_real_distribution<float> velocityFactor(2e-4f,4e-4f);
+        v *= velocityFactor(randomGen);
 
         newAsteroid.velocity = v;
 
         asteroidStates.push_back(newAsteroid);
+        puts("spawned");
         break;
     }
 }
