@@ -11,13 +11,13 @@ VULKANLIBPATH=$(VULKANDIR)/macOS/lib
 
 #VULKANDIR=/Users/guillaume/dev/MoltenVK/Package/Debug/MoltenVK
 VULKANDIR=/Users/guillaume/dev/Vulkan-LoaderAndValidationLayers
-VULKANINCPATH=$(VULKANDIR)/external/MoltenVK/Package/Debug/MoltenVK/include/
+VULKANINCPATH=$(VULKANDIR)/external/MoltenVK/Package/Release/MoltenVK/include/
 VULKANLIBPATH=$(VULKANDIR)/build/loader
 SHADERCOMPILER=/Users/guillaume/dev/vulkansdk-macos-1.0.69.0/macOS/bin/glslc
 
 INCS=-I$(GLFWDIR)/include/GLFW -I$(VULKANINCPATH) -I../cubesolver/
-CXXFLAGS=-flto -Wall -W -g $(INCS) -std=c++14 -O2 -fno-exceptions
-LDFLAGS=-flto -O2 -L$(GLFWDIR)/src -L $(VULKANLIBPATH) -framework Cocoa -framework Metal -framework IOSurface -rpath $(VULKANLIBPATH) -lglfw -lvulkan
+CXXFLAGS=-Wall -W -g $(INCS) -std=c++14 -O2 -fno-exceptions
+LDFLAGS=-g -L$(GLFWDIR)/src -L $(VULKANLIBPATH) -framework Cocoa -framework Metal -framework IOSurface -rpath $(VULKANLIBPATH) -lglfw -lvulkan
 
 all: vulkanasteroids fragment_background.spv vertex_background.spv vertex_ship.spv fragment_ship.spv
 vulkanasteroids: vulkanasteroids.o cube.o

@@ -9,8 +9,7 @@ layout(location = 1) in vec2 uv;
 
 layout(location = 0) out vec4 outColor;
 layout(push_constant) uniform PushConsts {
-	mat4 transform;
-	int idx;
+	layout (offset = 64) int idx;
 } pushConsts;
 
 void main() {

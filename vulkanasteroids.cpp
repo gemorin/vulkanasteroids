@@ -2250,6 +2250,8 @@ bool VulkanApp::resetCommandBuffer(uint32_t i)
     //} push;
     //push.shipTransform = shipState.getTransform();
     //push.texIdx = 0;
+    vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                      shipPipeline);
     MyMatrix shipTransform = shipState.getTransform();
     vkCmdPushConstants(b, shipPipelineLayout,
                        VK_SHADER_STAGE_VERTEX_BIT, 0,
@@ -2258,8 +2260,7 @@ bool VulkanApp::resetCommandBuffer(uint32_t i)
     vkCmdPushConstants(b, shipPipelineLayout,
                        VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(shipTransform),
                        sizeof(idx), &idx);
-    vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                      shipPipeline);
+
 
     buffers[0] = {shipVertex.buffer};
     offsets[0] = {0};
