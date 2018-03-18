@@ -9,7 +9,7 @@ layout(location = 1) in vec2 uv;
 
 layout(location = 0) out vec4 outColor;
 layout(push_constant) uniform PushConsts {
-	layout (offset = 256) int idx;
+	layout (offset = (NUM_MAX_ASTEROIDS * 64)) int idx;
 } pushConsts;
 
 void main() {

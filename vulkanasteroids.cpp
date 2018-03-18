@@ -203,7 +203,7 @@ class VulkanApp
         MyAABB2 getAABB(float *) const;
         void update(const VulkanApp *app);
     };
-    constexpr static uint32_t maxNumAsteroids = 4;
+    constexpr static uint32_t maxNumAsteroids = NUM_MAX_ASTEROIDS;
     constexpr static uint32_t vertexPushConstantsSize = maxNumAsteroids * sizeof(MyMatrix);
     vector<AsteroidState> asteroidStates;
     float asteroidSize[2];

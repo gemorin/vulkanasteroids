@@ -15,8 +15,11 @@ VULKANINCPATH=$(VULKANDIR)/external/MoltenVK/Package/Release/MoltenVK/include/
 VULKANLIBPATH=$(VULKANDIR)/build/loader
 SHADERCOMPILER=/Users/guillaume/dev/vulkansdk-macos-1.0.69.0/macOS/bin/glslc
 
+NUM_MAX_ASTEROIDS=4
+MACROS=-DNUM_MAX_ASTEROIDS=$(NUM_MAX_ASTEROIDS)
+
 INCS=-I$(GLFWDIR)/include/GLFW -I$(VULKANINCPATH)
-CXXFLAGS=-Wall -W -g $(INCS) -std=c++14 -O2 -fno-exceptions
+CXXFLAGS=-Wall -W -g $(INCS) -std=c++14 -O2 -fno-exceptions $(MACROS)
 LDFLAGS=-g -L$(GLFWDIR)/src -L $(VULKANLIBPATH) -framework Cocoa -framework Metal -framework IOSurface -rpath $(VULKANLIBPATH) -lglfw -lvulkan
 
 all: vulkanasteroids fragment_background.spv vertex_background.spv vertex_ship.spv fragment_ship.spv
@@ -29,10 +32,10 @@ vertex_background.spv: vertex_background.glsl
 	$(SHADERCOMPILER) -fshader-stage=vertex -o $@ $<
 
 fragment_ship.spv: fragment_ship.glsl
-	$(SHADERCOMPILER) -fshader-stage=fragment -o $@ $<
+	$(SHADERCOMPILER) $(MACROS) -fshader-stage=fragment -o $@ $<
 
 vertex_ship.spv: vertex_ship.glsl
-	$(SHADERCOMPILER) -fshader-stage=vertex -o $@ $<
+	$(SHADERCOMPILER) $(MACROS) -fshader-stage=vertex -o $@ $<
 
 clean:
 	rm -rf *.o vulkanasteroids vulkanasteroids.dSYM *.spv
