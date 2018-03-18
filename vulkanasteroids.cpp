@@ -171,7 +171,7 @@ class VulkanApp
 
         MyQuaternion rotStart;
         MyQuaternion rotEnd;
-        double rotStartTime;
+        double rotStartTime = 0.0f;
         bool inRotation = false;
 
       public:
@@ -181,7 +181,7 @@ class VulkanApp
         void updateOrientation(double currentTime, GLFWwindow *window);
         void updatePosition(double currentTime, VulkanApp *app);
         void update(double currentTime, VulkanApp *app);
-        MyMatrix getTransform();
+        MyMatrix getTransform() const;
         MyAABB2 getAABB(float *) const;
     };
     ShipState shipState;
@@ -192,19 +192,19 @@ class VulkanApp
         MyPoint velocity;
         MyQuaternion orientation;
 
+        MyQuaternion rotStart;
+        MyQuaternion rotEnd;
+        double rotStartTime = 0.0;
+
         AsteroidState() = default;
 
-        MyMatrix getTransform() const {
-            MyMatrix ret;
-            ret.set(0, 3, position.x);
-            ret.set(1, 3, position.y);
-            return ret;
-        }
+        MyMatrix getTransform() const;
         MyAABB2 getAABB(float *) const;
-        void update(const VulkanApp *app);
+        void update(double currentTime, const VulkanApp *app);
     };
     constexpr static uint32_t maxNumAsteroids = NUM_MAX_ASTEROIDS;
-    constexpr static uint32_t vertexPushConstantsSize = maxNumAsteroids * sizeof(MyMatrix);
+    constexpr static uint32_t vertexPushConstantsSize = maxNumAsteroids *
+                                                        sizeof(MyMatrix);
     vector<AsteroidState> asteroidStates;
     float asteroidSize[2];
     uniform_int_distribution<> asteroidSpawnRand{1, 30};
@@ -428,7 +428,7 @@ void VulkanApp::ShipState::update(double currentTime, VulkanApp *app)
     lastFrame = currentTime;
 }
 
-MyMatrix VulkanApp::ShipState::getTransform()
+MyMatrix VulkanApp::ShipState::getTransform() const
 {
     MyMatrix ret = orientation.toMatrix();
     ret.set(0, 3, position.x);
@@ -457,8 +457,25 @@ MyAABB2 VulkanApp::AsteroidState::getAABB(float *sizes) const
     return a;
 }
 
-void VulkanApp::AsteroidState::update(const VulkanApp *app)
+void VulkanApp::AsteroidState::update(double currentTime, const VulkanApp *app)
 {
+    constexpr float totTime = 2.0f;
+    float t = (currentTime - rotStartTime) / totTime;
+    if (t >= 1.0f) {
+        rotStart = rotEnd;
+        rotStartTime += totTime;
+
+        MyQuaternion newRot;
+        newRot.rotateZ(M_PI/4.0f);
+        rotEnd = newRot * rotEnd;
+        rotEnd.normalize();
+
+        // We may be slightly past the end of the previous one so make sure
+        // this is smooth.
+        t = (currentTime - rotStartTime) / totTime;
+    }
+    orientation = MyQuaternion::slerp(rotStart, rotEnd, t);
+
     position += velocity;
 
     if (position.x > -app->getMinX()) {
@@ -473,6 +490,15 @@ void VulkanApp::AsteroidState::update(const VulkanApp *app)
     else if (position.y < app->getMinY()) {
         position.y = -app->getMinY();
     }
+}
+
+MyMatrix VulkanApp::AsteroidState::getTransform() const
+{
+    MyMatrix ret = orientation.toMatrix();
+    ret.set(0, 3, position.x);
+    ret.set(1, 3, position.y);
+    ret.set(2, 3, position.z);
+    return ret;
 }
 
 VulkanApp::VulkanApp()
@@ -2480,7 +2506,7 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime)
         }
     }
     for (AsteroidState& a : asteroidStates)
-        a.update(this);
+        a.update(currentTime, this);
     shipState.update(currentTime, this);
 
     resetCommandBuffer(idx);
