@@ -23,7 +23,11 @@ CXXFLAGS=-Wall -W -g $(INCS) -std=c++14 -O2 -fno-exceptions $(MACROS)
 LDFLAGS=-g -L$(GLFWDIR)/src -L $(VULKANLIBPATH) -framework Cocoa -framework Metal -framework IOSurface -rpath $(VULKANLIBPATH) -lglfw -lvulkan
 
 all: vulkanasteroids fragment_background.spv vertex_background.spv vertex_ship.spv fragment_ship.spv
-vulkanasteroids: vulkanasteroids.o mymath.o
+vulkanasteroids: vulkanasteroids.o mymath.o stb_image.o
+
+stb_image.o: stb_image.h stb_image.cpp
+vulkanasteroids.o: mymath.h stb_image.h
+mymath.o: mymath.h mymath.cpp
 
 fragment_background.spv: fragment_background.glsl
 	$(SHADERCOMPILER) -fshader-stage=fragment -o $@ $<

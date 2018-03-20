@@ -76,9 +76,21 @@ MyMatrix MyMatrix::transpose() const
     return ret;
 }
 
-void MyPoint::print() const
+void MyPoint::makeOrthornormalBasis(MyPoint *y,
+                                    MyPoint *z,
+                                    const MyPoint& xAxis,
+                                    const MyPoint& otherAxis)
 {
-    printf("%.3f %.3f %.3f\n", x, y, z);
+    // assume both args are normalized
+    *z = xAxis.cross(otherAxis);
+    z->normalize();
+
+    *y = z->cross(xAxis);
+}
+
+void MyPoint::print(const char *s) const
+{
+    printf("%s%.3f %.3f %.3f\n", s, x, y, z);
 }
 
 MyPoint MyPoint::transform(const MyMatrix& m) const

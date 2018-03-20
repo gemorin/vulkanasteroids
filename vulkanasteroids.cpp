@@ -9,7 +9,6 @@
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-parameter"
-#define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 #pragma clang diagnostic pop
 
@@ -191,16 +190,23 @@ class VulkanApp
         MyPoint position;
         MyPoint velocity;
         MyQuaternion orientation;
+        float radius;
+        float angularVelocity = M_PI/8.0f; // 22.5deg/sec over z axis
+        MyMatrix inverseInertiaTensor;
 
         MyQuaternion rotStart;
         MyQuaternion rotEnd;
         double rotStartTime = 0.0;
 
+        float mass = 5.0f;
+
         AsteroidState() = default;
+
+        void generateTensor();
 
         MyMatrix getTransform() const;
         MyAABB2 getAABB(float *) const;
-        void update(double currentTime, const VulkanApp *app);
+        void update(double currentTime, double dt, const VulkanApp *app);
     };
     constexpr static uint32_t maxNumAsteroids = NUM_MAX_ASTEROIDS;
     constexpr static uint32_t vertexPushConstantsSize = maxNumAsteroids *
@@ -311,8 +317,11 @@ class VulkanApp
     }
 
     void spawnNewAsteroid();
+    void resolveAsteroidCollisions(AsteroidState& a, AsteroidState& b);
+    void processCollisions(AsteroidState& a, AsteroidState& b);
 
-    bool renderFrame(uint32_t renderCount, double currentTime);
+    bool renderFrame(uint32_t renderCount, double currentTime,
+                     double dt);
 
     // Glfw glue
     static void glfw_onResize(GLFWwindow * window, int width, int height)
@@ -355,6 +364,147 @@ class VulkanApp
                                          int32_t code, const char* layerPrefix,
                                          const char* msg, void* userData);
 };
+
+void VulkanApp::resolveAsteroidCollisions(AsteroidState& a, AsteroidState& b)
+{
+    MyPoint segment = b.position - a.position;
+    const float len = segment.length();
+
+    const float collisionDistance = a.radius + b.radius;
+    if (len >= collisionDistance) {
+        // Nothing to do
+        return;
+    }
+    const MyPoint velDiff = a.velocity - b.velocity;
+    const float velDiffLen = velDiff.length();
+    printf("time %lf\n", glfwGetTime());
+#if 0
+    a.position.print("a pos ");
+    a.velocity.print("a vel ");
+    b.position.print("b pos ");
+    b.velocity.print("b vel ");
+#endif
+
+    const float dot = velDiff.dot(segment);
+
+    const float quadA = velDiffLen * velDiffLen;
+    const float quadB = 2.0f * dot;
+    const float quadC = len * len - collisionDistance * collisionDistance;
+    const float sqrtDelta = sqrt(quadB * quadB - 4.0f * quadA * quadC);
+#if 0
+    printf("delta %f\n", sqrtDelta);
+    printf("a %f\n", quadA);
+    printf("b %f\n", quadB);
+    printf("c %f\n", quadC);
+#endif
+
+    const float s1 = (-quadB + sqrtDelta) / (2.0f * quadA);
+    const float s2 = (-quadB - sqrtDelta) / (2.0f * quadA);
+    const float s = s1 > s2 ? s1 : s2;
+    //printf("s1 %f s2 %f\n", s1, s2);
+
+    a.position += (a.velocity) * -s;
+    b.position += (b.velocity) * -s;
+    a.position.print("adj a pos ");
+    b.position.print("adj b pos ");
+}
+
+void VulkanApp::processCollisions(AsteroidState& a, AsteroidState& b)
+{
+    const MyPoint segment = a.position - b.position;
+    const float len = segment.length();
+    const float collisionDistance = a.radius + b.radius;
+    if (len > collisionDistance) {
+        // Nothing to do
+        return;
+    }
+
+    MyPoint aRelativeContactPos = segment * -0.5f;
+    MyPoint normal = segment * 1.0f;
+    normal.normalize();
+
+    MyPoint y,z;
+    MyPoint::makeOrthornormalBasis(&y, &z, normal, MyPoint(0.0f, 1.0f, 0.0f));
+    MyMatrix worldToContactTransform;
+    worldToContactTransform.set(0, 0, normal.x);
+    worldToContactTransform.set(0, 1, normal.y);
+    worldToContactTransform.set(0, 2, normal.z);
+    worldToContactTransform.set(1, 0, y.x);
+    worldToContactTransform.set(1, 1, y.y);
+    worldToContactTransform.set(1, 2, y.z);
+    worldToContactTransform.set(2, 0, z.x);
+    worldToContactTransform.set(2, 1, z.y);
+    worldToContactTransform.set(2, 2, z.z);
+    //normal.print("normal ");
+    //y.print("y ");
+    //z.print("z ");
+
+    // Contact velocity
+    MyPoint aContactVelocity = a.velocity +
+               MyPoint(0.0f,0.0f, a.angularVelocity).cross(aRelativeContactPos);
+    aContactVelocity = aContactVelocity.transform(worldToContactTransform);
+
+    // torque per impulse
+    MyPoint deltaVelocityWorld = aRelativeContactPos.cross(normal);
+    // rotation per impulse
+    deltaVelocityWorld = deltaVelocityWorld.transform(a.inverseInertiaTensor);
+    // velocity per impulse
+    deltaVelocityWorld = deltaVelocityWorld.cross(aRelativeContactPos);
+
+    double deltaVelocity = deltaVelocityWorld.dot(normal);
+    deltaVelocity += 1.0f/a.mass;
+
+    // b object
+    MyPoint bRelativeContactPos = aRelativeContactPos * -1.0f;
+    MyPoint bContactVelocity = b.velocity +
+               MyPoint(0.0f,0.0f, b.angularVelocity).cross(bRelativeContactPos);
+    bContactVelocity = bContactVelocity.transform(worldToContactTransform);
+    // torque
+    deltaVelocityWorld = bRelativeContactPos.cross(normal);
+    // rotation per impulse
+    deltaVelocityWorld = deltaVelocityWorld.transform(b.inverseInertiaTensor);
+    // velocity per impulse
+    deltaVelocityWorld = deltaVelocityWorld.cross(bRelativeContactPos);
+    deltaVelocity += deltaVelocityWorld.dot(normal);
+    deltaVelocity += 1.0f/b.mass;
+
+    MyPoint contactVelocity = aContactVelocity - bContactVelocity;
+    //contactVelocity.print("contactVelocity ");
+    constexpr float restitution = 2.0f;
+    double desiredDeltaVelocity = -contactVelocity.x * restitution;
+
+    // We're doing frictionless collision, everything happens in the normal
+    MyPoint impulseContact = MyPoint(desiredDeltaVelocity/deltaVelocity,
+                                     0.0f, 0.0f);
+    MyPoint impulse = impulseContact.transform(worldToContactTransform.transpose());
+    //printf("impulse (%f,%f,%f)\n", impulse.x, impulse.y, impulse.z);
+    //aRelativeContactPos.print("aRelativeContactPos ");
+    //bRelativeContactPos.print("bRelativeContactPos ");
+
+    // Split in the impulse into linear and rotational components
+    MyPoint impulsiveTorque = aRelativeContactPos.cross(impulse);
+    MyPoint rotChange = impulsiveTorque.transform(a.inverseInertiaTensor);
+    MyPoint velChange = impulse * (1.0f/a.mass);
+    velChange.print("velChange a ");
+    rotChange.print("rotChange a ");
+
+    a.velocity += velChange;
+    a.angularVelocity += rotChange.z;
+
+    impulsiveTorque = bRelativeContactPos.cross(impulse) * -1.0f;
+    rotChange = impulsiveTorque.transform(b.inverseInertiaTensor);
+    velChange = impulse * (-1.0f/b.mass);
+    velChange.print("velChange b ");
+    rotChange.print("rotChange b ");
+    puts("");
+
+    b.velocity += velChange;
+    b.angularVelocity += rotChange.z;
+    //a.velocity.print("new a vel ");
+    //b.velocity.print("new b vel ");
+
+    // cheating
+}
 
 void VulkanApp::ShipState::initiateRotation(bool pos, double currentTime)
 {
@@ -457,26 +607,27 @@ MyAABB2 VulkanApp::AsteroidState::getAABB(float *sizes) const
     return a;
 }
 
-void VulkanApp::AsteroidState::update(double currentTime, const VulkanApp *app)
+void VulkanApp::AsteroidState::update(double currentTime,
+                                      double dt,
+                                      const VulkanApp *app)
 {
-    constexpr float totTime = 2.0f;
-    float t = (currentTime - rotStartTime) / totTime;
+    float t = currentTime - rotStartTime;
     if (t >= 1.0f) {
         rotStart = rotEnd;
-        rotStartTime += totTime;
+        rotStartTime += 1.0;
 
         MyQuaternion newRot;
-        newRot.rotateZ(M_PI/4.0f);
+        newRot.rotateZ(angularVelocity);
         rotEnd = newRot * rotEnd;
         rotEnd.normalize();
 
         // We may be slightly past the end of the previous one so make sure
         // this is smooth.
-        t = (currentTime - rotStartTime) / totTime;
+        t -= 1.0f;
     }
     orientation = MyQuaternion::slerp(rotStart, rotEnd, t);
 
-    position += velocity;
+    position += (velocity * dt);
 
     if (position.x > -app->getMinX()) {
         position.x = app->getMinX();
@@ -499,6 +650,14 @@ MyMatrix VulkanApp::AsteroidState::getTransform() const
     ret.set(1, 3, position.y);
     ret.set(2, 3, position.z);
     return ret;
+}
+
+void VulkanApp::AsteroidState::generateTensor()
+{
+    const float value = 2.5f / (mass * radius * radius);
+    inverseInertiaTensor.set(0, 0, value);
+    inverseInertiaTensor.set(1, 1, value);
+    inverseInertiaTensor.set(2, 2, value);
 }
 
 VulkanApp::VulkanApp()
@@ -616,13 +775,16 @@ void VulkanApp::run()
     double prevFps = 0.0;
     bool updateStart = true;
     double start;
+    double prevTime = 0.0;
     while(1) {
         const double currentTime = glfwGetTime();
         if (updateStart) {
             start = currentTime;
             updateStart = false;
         }
-        bool running = renderFrame(renderCount++, currentTime);
+        bool running = renderFrame(renderCount++, currentTime,
+                                   currentTime - prevTime);
+        prevTime = currentTime;
 
         glfwPollEvents();
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) != GLFW_RELEASE)
@@ -1293,7 +1455,7 @@ bool VulkanApp::createRenderPass()
 #endif
 
     attachments[1].format = devInfo.format.format;
-    attachments[1].samples = VK_SAMPLE_COUNT_1_BIT; // required for resolve
+    attachments[1].samples = VK_SAMPLE_COUNT_1_BIT; // required for )esolve
     attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -2088,6 +2250,7 @@ bool VulkanApp::createVertexBuffers()
     v->emplace_back(MyPoint{-x,  y, z}, red, 0.0f, 0.0f);
     asteroidSize[0] = 2 * x;
     asteroidSize[1] = 2 * y;
+    printf("asteroid size %f %f\n", asteroidSize[0], asteroidSize[1]);
 
     printf("%lu\n", v->size());
     numBytes = v->size() * sizeof(*v->data());
@@ -2443,6 +2606,7 @@ void VulkanApp::spawnNewAsteroid()
                                           -getMinX() + halfXSize);
     while (1) {
         AsteroidState newAsteroid;
+#if 1
         newAsteroid.position = {disX(randomGen),
                                 -getMinY() - asteroidSize[1] / 2.0f,
                                 0.0f};
@@ -2461,10 +2625,31 @@ void VulkanApp::spawnNewAsteroid()
         MyPoint v = direction.transform(rot);
         v.normalize();
 
-        uniform_real_distribution<float> velocityFactor(2e-4f,4e-4f);
+        uniform_real_distribution<float> velocityFactor(1e-1f,2e-1f);
         v *= velocityFactor(randomGen);
-
         newAsteroid.velocity = v;
+#else
+        float v = 8e-2f;
+        if (asteroidStates.empty()) {
+            newAsteroid.position = { getMinX() + halfXSize,
+                                     -getMinY() - asteroidSize[1] / 2.0f,
+                                     0.0f };
+            newAsteroid.velocity = { v, -v, 0.0f };
+        }
+        else {
+            newAsteroid.position = { -getMinX() - halfXSize,
+                                     -getMinY() - asteroidSize[1] / 2.0f,
+                                     0.0f };
+            newAsteroid.velocity = { -v, -v, 0.0f };
+        }
+#endif
+
+
+        // radius of the collision sphere is the size of the y axis
+        // this is completely based on the assset we're using
+        newAsteroid.radius = asteroidSize[1] / 2.0f * 0.98f;
+
+        newAsteroid.generateTensor();
 
         asteroidStates.push_back(newAsteroid);
         puts("spawned");
@@ -2472,7 +2657,8 @@ void VulkanApp::spawnNewAsteroid()
     }
 }
 
-bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime)
+bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime,
+                            double dt)
 {
     (void) currentTime; // remove when we actually render stuff
     // Draw
@@ -2498,6 +2684,7 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime)
         }
     }
 #endif
+#if 1
     if (asteroidStates.size() < maxNumAsteroids) {
         if (currentTime > (lastSpawnRandCheck + 1.0)) {
             lastSpawnRandCheck = currentTime;
@@ -2505,8 +2692,27 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime)
                 spawnNewAsteroid();
         }
     }
+#else
+    if (asteroidStates.size() < 2) {
+        spawnNewAsteroid();
+    }
+#endif
+
+    for (uint32_t i = 0; i < asteroidStates.size(); ++i) {
+        for (uint32_t j = (i+1) ; j < asteroidStates.size(); ++j) {
+            processCollisions(asteroidStates[i], asteroidStates[j]);
+        }
+    }
     for (AsteroidState& a : asteroidStates)
-        a.update(currentTime, this);
+        a.update(currentTime, dt, this);
+
+    for (uint32_t i = 0; i < asteroidStates.size(); ++i) {
+        for (uint32_t j = (i+1) ; j < asteroidStates.size(); ++j) {
+            resolveAsteroidCollisions(asteroidStates[i], asteroidStates[j]);
+        }
+    }
+
+
     shipState.update(currentTime, this);
 
     resetCommandBuffer(idx);

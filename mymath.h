@@ -36,13 +36,16 @@ struct __attribute__((packed)) MyPoint {
     MyPoint operator*(float m) const;
     MyPoint& operator*=(float m);
     MyPoint opposite() const;
-    void print() const;
+    void print(const char *prefix = "") const;
     MyPoint transform(const MyMatrix& m) const;
     MyPoint transform(const MyQuaternion& q) const;
     float dot(const MyPoint& rhs) const;
     MyPoint cross(const MyPoint& rhs) const;
     float length() const;
     void normalize();
+    static void makeOrthornormalBasis(MyPoint *y, MyPoint *z,
+                                      const MyPoint& xaxis,
+                                      const MyPoint& otherAxis);
 };
 
 struct MyQuaternion {
