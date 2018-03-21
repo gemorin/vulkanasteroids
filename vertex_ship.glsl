@@ -10,6 +10,7 @@ out gl_PerVertex {
 };
 layout (location = 0) out vec3 color;
 layout (location = 1) out vec2 uv;
+layout (location = 2) out int instanceIndex;
 
 layout(binding = 0) uniform UniformMvp {
     mat4 view;
@@ -25,4 +26,5 @@ void main() {
 
     uv = inUv;
     color = inColor;
+    instanceIndex = gl_InstanceIndex;
 }

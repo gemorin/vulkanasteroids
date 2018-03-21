@@ -155,7 +155,6 @@ class VulkanApp
     VkShaderModule shipVertexShader;
     VkShaderModule shipFragmentShader;
     VertexBuffer shipVertex;
-    vector<Texture> shipTextures;
     VkPipeline shipPipeline;
     VkPipelineLayout shipPipelineLayout;
     VkSampler shipSampler;
@@ -201,6 +200,7 @@ class VulkanApp
         double rotStartTime = 0.0;
 
         float mass = 5.0f;
+        uint32_t textureIndex;
 
         AsteroidState() = default;
 
@@ -213,6 +213,17 @@ class VulkanApp
     constexpr static uint32_t maxNumAsteroids = NUM_MAX_ASTEROIDS;
     constexpr static uint32_t vertexPushConstantsSize = maxNumAsteroids *
                                                         sizeof(MyMatrix);
+    struct SpriteTextures {
+        static constexpr uint32_t shipTextureIndex = 0;
+        static constexpr uint32_t shipEngineTextureIndex = 1;
+        static constexpr uint32_t asteroidTextureStartIndex = 2;
+        static constexpr uint32_t asteroidTextureEndIndex = 5;
+
+        vector<Texture> textures;
+
+        SpriteTextures() { textures.resize(asteroidTextureEndIndex + 1); }
+    } spriteTextures;
+
     vector<AsteroidState> asteroidStates;
     float asteroidSize[2];
     uniform_int_distribution<> asteroidSpawnRand{1, 30};
@@ -234,7 +245,7 @@ class VulkanApp
     VpUniform *vpUniformPtr;
 
    public:
-    VulkanApp();
+    VulkanApp() = default;
     ~VulkanApp() = default;
 
     VulkanApp(VulkanApp&) = delete;
@@ -655,11 +666,6 @@ void VulkanApp::AsteroidState::generateTensor()
     inverseInertiaTensor.set(0, 0, value);
     inverseInertiaTensor.set(1, 1, value);
     inverseInertiaTensor.set(2, 2, value);
-}
-
-VulkanApp::VulkanApp()
-{
-    shipTextures.resize(3);
 }
 
 VkResult VulkanApp::CreateDebugReportCallbackEXT(
@@ -1565,7 +1571,7 @@ bool VulkanApp::createDescriptorSetLayout()
 
     layout[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
     layout[2].binding = 2;
-    layout[2].descriptorCount = shipTextures.size();
+    layout[2].descriptorCount = spriteTextures.textures.size();
     layout[2].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     layout[2].pImmutableSamplers = nullptr;
     layout[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -1799,7 +1805,7 @@ bool VulkanApp::createPipelines()
     pushConstantsRanges[0].size = vertexPushConstantsSize;
     pushConstantsRanges[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     pushConstantsRanges[1].offset = vertexPushConstantsSize;
-    pushConstantsRanges[1].size = sizeof(int);
+    pushConstantsRanges[1].size = sizeof(int) * maxNumAsteroids;
 
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutInfo.setLayoutCount = 1;
@@ -2190,14 +2196,18 @@ bool VulkanApp::createVertexBuffers()
     memcpy(data, v->data(), numBytes);
     vkUnmapMemory(device, backgroundVertex.memory);
 
+    // Aspect scale
+    const float xscale = -2.0f * getMinX() / float(devInfo.extent.width);
+    const float yscale = -2.0f * getMinY() / float(devInfo.extent.height);
+
     // ship
     v = &shipVertex.vertices;
+
     float spriteScale = 0.8f;
-    float xscale = -2.0f * getMinX() / float(devInfo.extent.width);
-    float yscale = -2.0f * getMinY() / float(devInfo.extent.height);
-    float x = float(shipTextures[0].width) * xscale / 2.0f * spriteScale;
-    //float y = x * shipTextures[0].height / shipTextures[0].width;
-    float y = yscale * float(shipTextures[0].height) / 2.0f * spriteScale;
+    const Texture *t =&spriteTextures.textures[spriteTextures.shipTextureIndex];
+
+    float x = float(t->width) * xscale / 2.0f * spriteScale;
+    float y = yscale * float(t->height) / 2.0f * spriteScale;
     v->emplace_back(MyPoint{-x, -y, z}, red, 0.0f, 1.0f);
     v->emplace_back(MyPoint{ x, -y, z}, red, 1.0f, 1.0f);
     v->emplace_back(MyPoint{ x,  y, z}, red, 1.0f, 0.0f);
@@ -2205,19 +2215,14 @@ bool VulkanApp::createVertexBuffers()
     v->emplace_back(MyPoint{-x, -y, z}, red, 0.0f, 1.0f);
     v->emplace_back(MyPoint{ x,  y, z}, red, 1.0f, 0.0f);
     v->emplace_back(MyPoint{-x,  y, z}, red, 0.0f, 0.0f);
-    // engine effect
-    //float xscale = -2.0f * getMinX() / float(devInfo.extent.width);
-    //float yscale = -2.0f * getMinY() / float(devInfo.extent.height);
-    //x = shipTextures[1].width / 2.0f; //float(devInfo.extent.width) / 1.0f;
-    //float ytop = -y;
-    //float ybot = ytop - shipTextures[1].height / 2.0f;//shipTextures[1].width;
     shipSize[0] = 2 * x;
     shipSize[1] = 2 * y;
 
-    // fire
+    // engine effect
+    t = &spriteTextures.textures[spriteTextures.shipEngineTextureIndex];
     spriteScale = 1.0f;
-    x = xscale * float(shipTextures[1].width) / 2.0f * spriteScale;
-    float ysize = yscale * float(shipTextures[1].height) * spriteScale;
+    x = xscale * float(t->width) / 2.0f * spriteScale;
+    float ysize = yscale * float(t->height) * spriteScale;
     float ybot = y;
     float ytop = ybot + ysize;
     printf("width %u height %u\n", devInfo.extent.width, devInfo.extent.height);
@@ -2234,10 +2239,12 @@ bool VulkanApp::createVertexBuffers()
     v->emplace_back(MyPoint{ x, ytop, z}, red, 1.0f, 0.0f);
     v->emplace_back(MyPoint{-x, ytop, z}, red, 0.0f, 0.0f);
 
-    // asteroid
+    // asteroids - we have multiple textures - for now to simplify we'll use
+    // the same vertices
     spriteScale = 0.25f;
-    x = float(shipTextures[2].width) * xscale / 2.0f * spriteScale;
-    y = yscale * float(shipTextures[2].height) / 2.0f * spriteScale;
+    t = &spriteTextures.textures[spriteTextures.asteroidTextureStartIndex];
+    x = float(t->width) * xscale / 2.0f * spriteScale;
+    y = yscale * float(t->height) / 2.0f * spriteScale;
     v->emplace_back(MyPoint{-x, -y, z}, red, 0.0f, 1.0f);
     v->emplace_back(MyPoint{ x, -y, z}, red, 1.0f, 1.0f);
     v->emplace_back(MyPoint{ x,  y, z}, red, 1.0f, 0.0f);
@@ -2392,7 +2399,7 @@ bool VulkanApp::createShipDescriptor()
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLER;
     poolSizes[1].descriptorCount = 1;
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-    poolSizes[2].descriptorCount = shipTextures.size();
+    poolSizes[2].descriptorCount = spriteTextures.textures.size();
 
     VkDescriptorPoolCreateInfo poolInfo = {};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -2430,12 +2437,12 @@ bool VulkanApp::createShipDescriptor()
     samplerImageInfo.imageView = nullptr;
     samplerImageInfo.sampler = shipSampler;
 
-    VkDescriptorImageInfo textureImageInfo[shipTextures.size()];
+    VkDescriptorImageInfo textureImageInfo[spriteTextures.textures.size()];
     memset(textureImageInfo, 0, sizeof(textureImageInfo));
-    for (uint32_t i = 0; i < shipTextures.size(); ++i) {
+    for (uint32_t i = 0; i < spriteTextures.textures.size(); ++i) {
         textureImageInfo[i].imageLayout =
                                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        textureImageInfo[i].imageView = shipTextures[i].view;
+        textureImageInfo[i].imageView = spriteTextures.textures[i].view;
         textureImageInfo[i].sampler = nullptr;
     }
 
@@ -2464,7 +2471,7 @@ bool VulkanApp::createShipDescriptor()
     descriptorWrite[2].dstBinding = 2;
     descriptorWrite[2].dstArrayElement = 0;
     descriptorWrite[2].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-    descriptorWrite[2].descriptorCount = shipTextures.size();
+    descriptorWrite[2].descriptorCount = spriteTextures.textures.size();
     descriptorWrite[2].pImageInfo = textureImageInfo;
 
     vkUpdateDescriptorSets(device,
@@ -2547,7 +2554,7 @@ bool VulkanApp::resetCommandBuffer(uint32_t i)
         vkCmdPushConstants(b, shipPipelineLayout,
                            VK_SHADER_STAGE_VERTEX_BIT, 0,
                            sizeof(shipTransform), &shipTransform);
-        int idx = 0;
+        uint32_t idx = spriteTextures.shipTextureIndex;
         vkCmdPushConstants(b, shipPipelineLayout,
                            VK_SHADER_STAGE_FRAGMENT_BIT,
                            vertexPushConstantsSize,
@@ -2563,7 +2570,7 @@ bool VulkanApp::resetCommandBuffer(uint32_t i)
 
     vkCmdDraw(b, 6, 1, 0, 0);
     if (GLFW_PRESS == glfwGetKey(window, GLFW_KEY_UP)) {
-        int idx = 1;
+        uint32_t idx = spriteTextures.shipEngineTextureIndex;
         vkCmdPushConstants(b, shipPipelineLayout,
                            VK_SHADER_STAGE_FRAGMENT_BIT,
                            vertexPushConstantsSize,
@@ -2571,18 +2578,20 @@ bool VulkanApp::resetCommandBuffer(uint32_t i)
         vkCmdDraw(b, 6, 1, 6, 0);
     }
     if (!asteroidStates.empty()) {
+        uint32_t texIndices[asteroidStates.size()];
         MyMatrix transforms[asteroidStates.size()];
-        for (uint32_t i = 0 ; i < asteroidStates.size(); ++i)
+        for (uint32_t i = 0 ; i < asteroidStates.size(); ++i) {
             transforms[i] = asteroidStates[i].getTransform();
+            texIndices[i] = asteroidStates[i].textureIndex;
+        }
 
         vkCmdPushConstants(b, shipPipelineLayout,
                            VK_SHADER_STAGE_VERTEX_BIT, 0,
                            sizeof(transforms), transforms);
-        int idx = 2;
         vkCmdPushConstants(b, shipPipelineLayout,
                            VK_SHADER_STAGE_FRAGMENT_BIT,
                            vertexPushConstantsSize,
-                           sizeof(idx), &idx);
+                           sizeof(texIndices), texIndices);
         vkCmdDraw(b, 6, asteroidStates.size(), 12, 0);
     }
 
@@ -2599,8 +2608,8 @@ bool VulkanApp::resetCommandBuffer(uint32_t i)
 void VulkanApp::spawnNewAsteroid()
 {
     const float halfXSize = asteroidSize[0] / 2.0f;
-    uniform_real_distribution<float> disX(getMinX() + halfXSize,
-                                          -getMinX() + halfXSize);
+    static uniform_real_distribution<float> disX(getMinX() + halfXSize,
+                                                 -getMinX() + halfXSize);
     while (1) {
         AsteroidState newAsteroid;
 #ifndef TEST_COLLISIONS
@@ -2615,14 +2624,14 @@ void VulkanApp::spawnNewAsteroid()
 
         // Generate velocity
         MyPoint direction(0.0f, 1.0f, 0.0f);
-        uniform_real_distribution<float> angle(-M_PI, M_PI);
+        static uniform_real_distribution<float> angle(-M_PI, M_PI);
 
         MyQuaternion rot;
         rot.rotateZ(angle(randomGen));
         MyPoint v = direction.transform(rot);
         v.normalize();
 
-        uniform_real_distribution<float> velocityFactor(1e-1f,2e-1f);
+        static uniform_real_distribution<float> velocityFactor(1e-1f,2e-1f);
         v *= velocityFactor(randomGen);
         newAsteroid.velocity = v;
 #else
@@ -2641,6 +2650,10 @@ void VulkanApp::spawnNewAsteroid()
         }
 #endif
 
+        uniform_int_distribution<uint32_t> asteroidTextures{
+                                   spriteTextures.asteroidTextureStartIndex,
+                                   spriteTextures.asteroidTextureEndIndex};
+        newAsteroid.textureIndex = asteroidTextures(randomGen);
 
         // radius of the collision sphere is the size of the y axis
         // this is completely based on the assset we're using
@@ -2822,8 +2835,8 @@ void VulkanApp::cleanupSwapChain()
     }
     backgroundTexture.cleanup(device);
     vkDestroySampler(device, backgroundSampler, nullptr);
-    for (uint32_t i = 0 ; i < shipTextures.size(); ++i) {
-        shipTextures[i].cleanup(device);
+    for (uint32_t i = 0 ; i < spriteTextures.textures.size(); ++i) {
+        spriteTextures.textures[i].cleanup(device);
     }
     vkDestroySampler(device, shipSampler, nullptr);
 
@@ -3023,15 +3036,22 @@ bool VulkanApp::createTexture(struct Texture *texture,
 }
 
 bool VulkanApp::createTextures() {
+    uint32_t shipIdx = spriteTextures.shipTextureIndex;
+    uint32_t engineIdx = spriteTextures.shipEngineTextureIndex;
+    uint32_t asteroidStart = spriteTextures.asteroidTextureStartIndex;
     if (!createTexture(&backgroundTexture, "assets/background.png")
-     || !createTexture(&shipTextures[0], "assets/ship.png")
-     || !createTexture(&shipTextures[1], "assets/engine1.png")
-     || !createTexture(&shipTextures[2], "assets/asteroid.png")) {
+     || !createTexture(&spriteTextures.textures[shipIdx], "assets/ship.png")
+     || !createTexture(&spriteTextures.textures[engineIdx], "assets/engine1.png")
+     || !createTexture(&spriteTextures.textures[asteroidStart],
+                       "assets/asteroid_v1.png")
+     || !createTexture(&spriteTextures.textures[asteroidStart + 1],
+                       "assets/asteroid_v2.png")
+     || !createTexture(&spriteTextures.textures[asteroidStart + 2],
+                       "assets/asteroid_v3.png")
+     || !createTexture(&spriteTextures.textures[asteroidStart + 3],
+                       "assets/asteroid_v4.png")) {
         return false;
     }
-    printf("0 %ux%u\n", shipTextures[0].width, shipTextures[0].height);
-    printf("1 %ux%u\n", shipTextures[1].width, shipTextures[1].height);
-    printf("2 %ux%u\n", shipTextures[2].width, shipTextures[2].height);
 
     VkSamplerCreateInfo samplerInfo = {};
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
