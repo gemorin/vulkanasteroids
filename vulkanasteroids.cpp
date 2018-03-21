@@ -18,6 +18,8 @@ using namespace std;
 
 static constexpr bool enableValidation = true;
 
+#define TEST_COLLISIONS 1
+
 struct MyAABB2 {
     struct {
         float x;
@@ -319,6 +321,9 @@ class VulkanApp
     void spawnNewAsteroid();
     void resolveAsteroidCollisions(AsteroidState& a, AsteroidState& b);
     void processCollisions(AsteroidState& a, AsteroidState& b);
+    double getDeltaVelocity(const AsteroidState& a,
+                            const MyPoint& relativeContactPos,
+                            const MyPoint& normal);
 
     bool renderFrame(uint32_t renderCount, double currentTime,
                      double dt);
@@ -409,6 +414,19 @@ void VulkanApp::resolveAsteroidCollisions(AsteroidState& a, AsteroidState& b)
     b.position.print("adj b pos ");
 }
 
+double VulkanApp::getDeltaVelocity(const AsteroidState& a,
+                                   const MyPoint& relativeContactPos,
+                                   const MyPoint& normal)
+{
+    MyPoint deltaVelocityWorld = relativeContactPos.cross(normal);
+    // rotation per impulse
+    deltaVelocityWorld = deltaVelocityWorld.transform(a.inverseInertiaTensor);
+    // velocity per impulse
+    deltaVelocityWorld = deltaVelocityWorld.cross(relativeContactPos);
+
+    return deltaVelocityWorld.dot(normal) + 1.0f / a.mass;
+}
+
 void VulkanApp::processCollisions(AsteroidState& a, AsteroidState& b)
 {
     const MyPoint segment = a.position - b.position;
@@ -419,10 +437,12 @@ void VulkanApp::processCollisions(AsteroidState& a, AsteroidState& b)
         return;
     }
 
-    MyPoint aRelativeContactPos = segment * -0.5f;
+    // compute normal
     MyPoint normal = segment * 1.0f;
     normal.normalize();
 
+    // Compute contact basis transform -- FIXME up might not work as a 2nd
+    // vector
     MyPoint y,z;
     MyPoint::makeOrthornormalBasis(&y, &z, normal, MyPoint(0.0f, 1.0f, 0.0f));
     MyMatrix worldToContactTransform;
@@ -435,51 +455,33 @@ void VulkanApp::processCollisions(AsteroidState& a, AsteroidState& b)
     worldToContactTransform.set(2, 0, z.x);
     worldToContactTransform.set(2, 1, z.y);
     worldToContactTransform.set(2, 2, z.z);
-    //normal.print("normal ");
-    //y.print("y ");
-    //z.print("z ");
+
+    // Contact positions
+    const MyPoint aRelativeContactPos = segment * -0.5f;
+    const MyPoint bRelativeContactPos = aRelativeContactPos * -1.0f;
 
     // Contact velocity
     MyPoint aContactVelocity = a.velocity +
                MyPoint(0.0f,0.0f, a.angularVelocity).cross(aRelativeContactPos);
     aContactVelocity = aContactVelocity.transform(worldToContactTransform);
 
-    // torque per impulse
-    MyPoint deltaVelocityWorld = aRelativeContactPos.cross(normal);
-    // rotation per impulse
-    deltaVelocityWorld = deltaVelocityWorld.transform(a.inverseInertiaTensor);
-    // velocity per impulse
-    deltaVelocityWorld = deltaVelocityWorld.cross(aRelativeContactPos);
-
-    double deltaVelocity = deltaVelocityWorld.dot(normal);
-    deltaVelocity += 1.0f/a.mass;
-
-    // b object
-    MyPoint bRelativeContactPos = aRelativeContactPos * -1.0f;
     MyPoint bContactVelocity = b.velocity +
                MyPoint(0.0f,0.0f, b.angularVelocity).cross(bRelativeContactPos);
     bContactVelocity = bContactVelocity.transform(worldToContactTransform);
-    // torque
-    deltaVelocityWorld = bRelativeContactPos.cross(normal);
-    // rotation per impulse
-    deltaVelocityWorld = deltaVelocityWorld.transform(b.inverseInertiaTensor);
-    // velocity per impulse
-    deltaVelocityWorld = deltaVelocityWorld.cross(bRelativeContactPos);
-    deltaVelocity += deltaVelocityWorld.dot(normal);
-    deltaVelocity += 1.0f/b.mass;
 
     MyPoint contactVelocity = aContactVelocity - bContactVelocity;
-    //contactVelocity.print("contactVelocity ");
     constexpr float restitution = 2.0f;
-    double desiredDeltaVelocity = -contactVelocity.x * restitution;
+    const double desiredDeltaVelocity = -contactVelocity.x * restitution;
+    const double deltaVelocity =
+                           getDeltaVelocity(a, aRelativeContactPos, normal) +
+                           getDeltaVelocity(b, bRelativeContactPos, normal);
 
     // We're doing frictionless collision, everything happens in the normal
     MyPoint impulseContact = MyPoint(desiredDeltaVelocity/deltaVelocity,
                                      0.0f, 0.0f);
-    MyPoint impulse = impulseContact.transform(worldToContactTransform.transpose());
-    //printf("impulse (%f,%f,%f)\n", impulse.x, impulse.y, impulse.z);
-    //aRelativeContactPos.print("aRelativeContactPos ");
-    //bRelativeContactPos.print("bRelativeContactPos ");
+    // Transform back into world coordinates
+    MyPoint impulse = impulseContact.transform(
+                                          worldToContactTransform.transpose());
 
     // Split in the impulse into linear and rotational components
     MyPoint impulsiveTorque = aRelativeContactPos.cross(impulse);
@@ -487,11 +489,10 @@ void VulkanApp::processCollisions(AsteroidState& a, AsteroidState& b)
     MyPoint velChange = impulse * (1.0f/a.mass);
     velChange.print("velChange a ");
     rotChange.print("rotChange a ");
-
     a.velocity += velChange;
     a.angularVelocity += rotChange.z;
 
-    impulsiveTorque = bRelativeContactPos.cross(impulse) * -1.0f;
+    impulsiveTorque = impulse.cross(bRelativeContactPos.cross(impulse));
     rotChange = impulsiveTorque.transform(b.inverseInertiaTensor);
     velChange = impulse * (-1.0f/b.mass);
     velChange.print("velChange b ");
@@ -500,10 +501,6 @@ void VulkanApp::processCollisions(AsteroidState& a, AsteroidState& b)
 
     b.velocity += velChange;
     b.angularVelocity += rotChange.z;
-    //a.velocity.print("new a vel ");
-    //b.velocity.print("new b vel ");
-
-    // cheating
 }
 
 void VulkanApp::ShipState::initiateRotation(bool pos, double currentTime)
@@ -2606,7 +2603,7 @@ void VulkanApp::spawnNewAsteroid()
                                           -getMinX() + halfXSize);
     while (1) {
         AsteroidState newAsteroid;
-#if 1
+#ifndef TEST_COLLISIONS
         newAsteroid.position = {disX(randomGen),
                                 -getMinY() - asteroidSize[1] / 2.0f,
                                 0.0f};
@@ -2684,7 +2681,7 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime,
         }
     }
 #endif
-#if 1
+#ifndef TEST_COLLISIONS
     if (asteroidStates.size() < maxNumAsteroids) {
         if (currentTime > (lastSpawnRandCheck + 1.0)) {
             lastSpawnRandCheck = currentTime;
