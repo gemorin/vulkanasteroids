@@ -18,7 +18,7 @@ using namespace std;
 
 static constexpr bool enableValidation = true;
 
-#define TEST_COLLISIONS 1
+//#define TEST_COLLISIONS 1
 
 struct MyAABB2 {
     struct {
@@ -152,18 +152,17 @@ class VulkanApp
     // Ship
     VkDescriptorSetLayout shipDescriptorLayout;
     Descriptor shipDescriptor;
-    VkShaderModule shipVertexShader;
+    VkShaderModule spriteVertexShader;
     VkShaderModule shipFragmentShader;
-    VertexBuffer shipVertex;
+    VertexBuffer spriteVertex;
     VkPipeline shipPipeline;
     VkPipelineLayout shipPipelineLayout;
     VkSampler shipSampler;
     //MyMatrix shipTransform;
 
-    class ShipState {
+    struct ShipState {
         MyPoint position;
         MyPoint velocity;
-        //MyPoint accel;
 
         MyQuaternion orientation;
 
@@ -174,15 +173,14 @@ class VulkanApp
         double rotStartTime = 0.0f;
         bool inRotation = false;
 
-      public:
         ShipState() { orientation.rotateZ(M_PI); }
 
         void initiateRotation(bool pos, double currentTime);
         void updateOrientation(double currentTime, GLFWwindow *window);
         void updatePosition(double currentTime, VulkanApp *app);
         void update(double currentTime, VulkanApp *app);
+        const MyPoint& getPosition() const { return position; }
         MyMatrix getTransform() const;
-        MyAABB2 getAABB(float *) const;
     };
     ShipState shipState;
     float shipSize[2];
@@ -207,7 +205,6 @@ class VulkanApp
         void generateTensor();
 
         MyMatrix getTransform() const;
-        MyAABB2 getAABB(float *) const;
         void update(double currentTime, double dt, const VulkanApp *app);
     };
     constexpr static uint32_t maxNumAsteroids = NUM_MAX_ASTEROIDS;
@@ -216,13 +213,28 @@ class VulkanApp
     struct SpriteTextures {
         static constexpr uint32_t shipTextureIndex = 0;
         static constexpr uint32_t shipEngineTextureIndex = 1;
-        static constexpr uint32_t asteroidTextureStartIndex = 2;
-        static constexpr uint32_t asteroidTextureEndIndex = 5;
+        static constexpr uint32_t shipBulletTextureIndex = 2;
+        static constexpr uint32_t asteroidTextureStartIndex = 3;
+        static constexpr uint32_t asteroidTextureEndIndex = 6;
 
         vector<Texture> textures;
+        // Move sizes in our coord here XXX FIXME
 
         SpriteTextures() { textures.resize(asteroidTextureEndIndex + 1); }
-    } spriteTextures;
+        static_assert((asteroidTextureEndIndex + 1) == TEXTURE_ARRAY_SIZE,
+                      "texture array is not sized properly");
+    } sprites;
+
+    struct BulletState {
+        MyPoint position;
+        MyQuaternion orientation;
+        MyPoint velocity;
+        bool live = false;
+
+        void update(double dt, const VulkanApp *app);
+        MyMatrix getTransform() const;
+    } bulletState;
+    float bulletSize[2];
 
     vector<AsteroidState> asteroidStates;
     float asteroidSize[2];
@@ -330,6 +342,7 @@ class VulkanApp
     }
 
     void spawnNewAsteroid();
+    static MyAABB2 getAABB(float *, MyPoint position);
     void resolveAsteroidCollisions(AsteroidState& a, AsteroidState& b);
     void processCollisions(AsteroidState& a, AsteroidState& b);
     double getDeltaVelocity(const AsteroidState& a,
@@ -595,17 +608,7 @@ MyMatrix VulkanApp::ShipState::getTransform() const
     return ret;
 }
 
-MyAABB2 VulkanApp::ShipState::getAABB(float *sizes) const
-{
-    MyAABB2 a;
-    a.min.x = max(0.0f, position.x - sizes[0] / 2.0f);
-    a.max.x = max(0.0f, position.x + sizes[0] / 2.0f);
-    a.min.y = max(0.0f, position.y - sizes[1] / 2.0f);
-    a.max.y = max(0.0f, position.y + sizes[1] / 2.0f);
-    return a;
-}
-
-MyAABB2 VulkanApp::AsteroidState::getAABB(float *sizes) const
+MyAABB2 VulkanApp::getAABB(float *sizes, MyPoint position)
 {
     MyAABB2 a;
     a.min.x = max(0.0f, position.x - sizes[0] / 2.0f);
@@ -666,6 +669,27 @@ void VulkanApp::AsteroidState::generateTensor()
     inverseInertiaTensor.set(0, 0, value);
     inverseInertiaTensor.set(1, 1, value);
     inverseInertiaTensor.set(2, 2, value);
+}
+
+void VulkanApp::BulletState::update(double dt, const VulkanApp *app)
+{
+    position += (velocity * dt);
+
+    if (position.x > -app->getMinX()
+     || position.x < app->getMinX()
+     || position.y > -app->getMinY()
+     || position.y < app->getMinY()) {
+        live = false;
+    }
+}
+
+MyMatrix VulkanApp::BulletState::getTransform() const
+{
+    MyMatrix ret = orientation.toMatrix();
+    ret.set(0, 3, position.x);
+    ret.set(1, 3, position.y);
+    ret.set(2, 3, position.z);
+    return ret;
 }
 
 VkResult VulkanApp::CreateDebugReportCallbackEXT(
@@ -1424,7 +1448,7 @@ bool VulkanApp::createShaders(VkShaderModule *vs,
 bool VulkanApp::loadShaders() {
     if (!createShaders(&backgroundVertexShader, &backgroundFragmentShader,
                        "vertex_background.spv", "fragment_background.spv")
-     || !createShaders(&shipVertexShader, &shipFragmentShader,
+     || !createShaders(&spriteVertexShader, &shipFragmentShader,
                        "vertex_ship.spv", "fragment_ship.spv")) {
         return false;
     }
@@ -1571,7 +1595,7 @@ bool VulkanApp::createDescriptorSetLayout()
 
     layout[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
     layout[2].binding = 2;
-    layout[2].descriptorCount = spriteTextures.textures.size();
+    layout[2].descriptorCount = sprites.textures.size();
     layout[2].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     layout[2].pImmutableSamplers = nullptr;
     layout[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -1825,7 +1849,7 @@ bool VulkanApp::createPipelines()
     vertShaderStageInfo.sType =
                            VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
-    vertShaderStageInfo.module = shipVertexShader;
+    vertShaderStageInfo.module = spriteVertexShader;
     vertShaderStageInfo.pName = "main";
 
     fragShaderStageInfo.sType =
@@ -2172,16 +2196,18 @@ bool VulkanApp::createVertexBuffers()
 
     // First triangle of background
     constexpr MyPoint red(1.0f, 0.0f, 0.0f);
-    auto* v = &backgroundVertex.vertices;
-    v->emplace_back(MyPoint{-0.5f, bottom, z}, red, 0.0f, 1.0f);
-    v->emplace_back(MyPoint{ 0.5f, bottom, z}, red, 1.0f, 1.0f);
-    v->emplace_back(MyPoint{ 0.5f,    top, z}, red, 1.0f, 0.0f);
+    backgroundVertex.vertices.resize(6);
+    auto* v = &backgroundVertex.vertices.front();
+    *(v++) = {MyPoint{-0.5f, bottom, z}, red, 0.0f, 1.0f};
+    *(v++) = {MyPoint{ 0.5f, bottom, z}, red, 1.0f, 1.0f};
+    *(v++) = {MyPoint{ 0.5f,    top, z}, red, 1.0f, 0.0f};
     // 2nd
-    v->emplace_back(MyPoint{-0.5f, bottom, z}, red, 0.0f, 1.0f);
-    v->emplace_back(MyPoint{ 0.5f,    top, z}, red, 1.0f, 0.0f);
-    v->emplace_back(MyPoint{-0.5f,    top, z}, red, 0.0f, 0.0f);
+    *(v++) = {MyPoint{-0.5f, bottom, z}, red, 0.0f, 1.0f};
+    *(v++) = {MyPoint{ 0.5f,    top, z}, red, 1.0f, 0.0f};
+    *(v++) = {MyPoint{-0.5f,    top, z}, red, 0.0f, 0.0f};
 
-    uint32_t numBytes = v->size() * sizeof(*v->data());
+    uint32_t numBytes = backgroundVertex.vertices.size() *
+                        sizeof(backgroundVertex.vertices.front());
     const VkBufferUsageFlags vertexUsage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
     const VkMemoryPropertyFlags memFlags =
                                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
@@ -2193,33 +2219,36 @@ bool VulkanApp::createVertexBuffers()
 
     void* data;
     vkMapMemory(device, backgroundVertex.memory, 0, numBytes, 0, &data);
-    memcpy(data, v->data(), numBytes);
+    memcpy(data, backgroundVertex.vertices.data(), numBytes);
     vkUnmapMemory(device, backgroundVertex.memory);
 
     // Aspect scale
     const float xscale = -2.0f * getMinX() / float(devInfo.extent.width);
     const float yscale = -2.0f * getMinY() / float(devInfo.extent.height);
 
-    // ship
-    v = &shipVertex.vertices;
+    // Assuming all sprites are 2 triangles
+    spriteVertex.vertices.resize(6 * (sprites.asteroidTextureEndIndex + 1));
 
+    // ship
     float spriteScale = 0.8f;
-    const Texture *t =&spriteTextures.textures[spriteTextures.shipTextureIndex];
+    const Texture *t = &sprites.textures[sprites.shipTextureIndex];
+    v = &spriteVertex.vertices[6 * sprites.shipTextureIndex];
 
     float x = float(t->width) * xscale / 2.0f * spriteScale;
     float y = yscale * float(t->height) / 2.0f * spriteScale;
-    v->emplace_back(MyPoint{-x, -y, z}, red, 0.0f, 1.0f);
-    v->emplace_back(MyPoint{ x, -y, z}, red, 1.0f, 1.0f);
-    v->emplace_back(MyPoint{ x,  y, z}, red, 1.0f, 0.0f);
+    *(v++) = {MyPoint{-x, -y, z}, red, 0.0f, 1.0f};
+    *(v++) = {MyPoint{ x, -y, z}, red, 1.0f, 1.0f};
+    *(v++) = {MyPoint{ x,  y, z}, red, 1.0f, 0.0f};
     // 2nd
-    v->emplace_back(MyPoint{-x, -y, z}, red, 0.0f, 1.0f);
-    v->emplace_back(MyPoint{ x,  y, z}, red, 1.0f, 0.0f);
-    v->emplace_back(MyPoint{-x,  y, z}, red, 0.0f, 0.0f);
+    *(v++) = {MyPoint{-x, -y, z}, red, 0.0f, 1.0f};
+    *(v++) = {MyPoint{ x,  y, z}, red, 1.0f, 0.0f};
+    *(v++) = {MyPoint{-x,  y, z}, red, 0.0f, 0.0f};
     shipSize[0] = 2 * x;
     shipSize[1] = 2 * y;
 
     // engine effect
-    t = &spriteTextures.textures[spriteTextures.shipEngineTextureIndex];
+    t = &sprites.textures[sprites.shipEngineTextureIndex];
+    v = &spriteVertex.vertices[6 * sprites.shipEngineTextureIndex];
     spriteScale = 1.0f;
     x = xscale * float(t->width) / 2.0f * spriteScale;
     float ysize = yscale * float(t->height) * spriteScale;
@@ -2231,40 +2260,59 @@ bool VulkanApp::createVertexBuffers()
     printf("%f < x < %f (diff %f), %f < y < %f (diff %f)\n",
            -x, x, 2.0f * x, ybot, ytop, ytop - ybot);
 
-    v->emplace_back(MyPoint{-x, ybot, z}, red, 0.0f, 1.0f);
-    v->emplace_back(MyPoint{ x, ybot, z}, red, 1.0f, 1.0f);
-    v->emplace_back(MyPoint{ x, ytop, z}, red, 1.0f, 0.0f);
+    *(v++) = {MyPoint{-x, ybot, z}, red, 0.0f, 1.0f};
+    *(v++) = {MyPoint{ x, ybot, z}, red, 1.0f, 1.0f};
+    *(v++) = {MyPoint{ x, ytop, z}, red, 1.0f, 0.0f};
     // 2nd
-    v->emplace_back(MyPoint{-x, ybot, z}, red, 0.0f, 1.0f);
-    v->emplace_back(MyPoint{ x, ytop, z}, red, 1.0f, 0.0f);
-    v->emplace_back(MyPoint{-x, ytop, z}, red, 0.0f, 0.0f);
+    *(v++) = {MyPoint{-x, ybot, z}, red, 0.0f, 1.0f};
+    *(v++) = {MyPoint{ x, ytop, z}, red, 1.0f, 0.0f};
+    *(v++) = {MyPoint{-x, ytop, z}, red, 0.0f, 0.0f};
+
+    // bullet
+    t = &sprites.textures[sprites.shipBulletTextureIndex];
+    v = &spriteVertex.vertices[6 * sprites.shipBulletTextureIndex];
+    spriteScale = 1.0f;
+    x = float(t->width) * xscale / 2.0f * spriteScale;
+    y = yscale * float(t->height) / 2.0f * spriteScale;
+    *(v++) = {MyPoint{-x, -y, z}, red, 0.0f, 1.0f};
+    *(v++) = {MyPoint{ x, -y, z}, red, 1.0f, 1.0f};
+    *(v++) = {MyPoint{ x,  y, z}, red, 1.0f, 0.0f};
+    // 2nd
+    *(v++) = {MyPoint{-x, -y, z}, red, 0.0f, 1.0f};
+    *(v++) = {MyPoint{ x,  y, z}, red, 1.0f, 0.0f};
+    *(v++) = {MyPoint{-x,  y, z}, red, 0.0f, 0.0f};
+    // XXX FIXME sprite size?
+    bulletSize[0] = 2 * x;
+    bulletSize[1] = 2 * y;
+
 
     // asteroids - we have multiple textures - for now to simplify we'll use
     // the same vertices
     spriteScale = 0.25f;
-    t = &spriteTextures.textures[spriteTextures.asteroidTextureStartIndex];
+    t = &sprites.textures[sprites.asteroidTextureStartIndex];
+    v = &spriteVertex.vertices[6 * sprites.asteroidTextureStartIndex];
     x = float(t->width) * xscale / 2.0f * spriteScale;
     y = yscale * float(t->height) / 2.0f * spriteScale;
-    v->emplace_back(MyPoint{-x, -y, z}, red, 0.0f, 1.0f);
-    v->emplace_back(MyPoint{ x, -y, z}, red, 1.0f, 1.0f);
-    v->emplace_back(MyPoint{ x,  y, z}, red, 1.0f, 0.0f);
+    *(v++) = {MyPoint{-x, -y, z}, red, 0.0f, 1.0f};
+    *(v++) = {MyPoint{ x, -y, z}, red, 1.0f, 1.0f};
+    *(v++) = {MyPoint{ x,  y, z}, red, 1.0f, 0.0f};
     // 2nd
-    v->emplace_back(MyPoint{-x, -y, z}, red, 0.0f, 1.0f);
-    v->emplace_back(MyPoint{ x,  y, z}, red, 1.0f, 0.0f);
-    v->emplace_back(MyPoint{-x,  y, z}, red, 0.0f, 0.0f);
+    *(v++) = {MyPoint{-x, -y, z}, red, 0.0f, 1.0f};
+    *(v++) = {MyPoint{ x,  y, z}, red, 1.0f, 0.0f};
+    *(v++) = {MyPoint{-x,  y, z}, red, 0.0f, 0.0f};
     asteroidSize[0] = 2 * x;
     asteroidSize[1] = 2 * y;
     printf("asteroid size %f %f\n", asteroidSize[0], asteroidSize[1]);
 
-    printf("%lu\n", v->size());
-    numBytes = v->size() * sizeof(*v->data());
-    if (!createBuffer(&shipVertex.buffer, &shipVertex.memory,
+    numBytes = spriteVertex.vertices.size() *
+               sizeof(spriteVertex.vertices.front());
+    if (!createBuffer(&spriteVertex.buffer, &spriteVertex.memory,
                       numBytes, vertexUsage, memFlags, false)) {
         return false;
     }
-    vkMapMemory(device, shipVertex.memory, 0, numBytes, 0, &data);
-    memcpy(data, v->data(), numBytes);
-    vkUnmapMemory(device, shipVertex.memory);
+    vkMapMemory(device, spriteVertex.memory, 0, numBytes, 0, &data);
+    memcpy(data, spriteVertex.vertices.data(), numBytes);
+    vkUnmapMemory(device, spriteVertex.memory);
 
     return true;
 }
@@ -2399,7 +2447,7 @@ bool VulkanApp::createShipDescriptor()
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLER;
     poolSizes[1].descriptorCount = 1;
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-    poolSizes[2].descriptorCount = spriteTextures.textures.size();
+    poolSizes[2].descriptorCount = sprites.textures.size();
 
     VkDescriptorPoolCreateInfo poolInfo = {};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -2437,12 +2485,12 @@ bool VulkanApp::createShipDescriptor()
     samplerImageInfo.imageView = nullptr;
     samplerImageInfo.sampler = shipSampler;
 
-    VkDescriptorImageInfo textureImageInfo[spriteTextures.textures.size()];
+    VkDescriptorImageInfo textureImageInfo[sprites.textures.size()];
     memset(textureImageInfo, 0, sizeof(textureImageInfo));
-    for (uint32_t i = 0; i < spriteTextures.textures.size(); ++i) {
+    for (uint32_t i = 0; i < sprites.textures.size(); ++i) {
         textureImageInfo[i].imageLayout =
                                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        textureImageInfo[i].imageView = spriteTextures.textures[i].view;
+        textureImageInfo[i].imageView = sprites.textures[i].view;
         textureImageInfo[i].sampler = nullptr;
     }
 
@@ -2471,7 +2519,7 @@ bool VulkanApp::createShipDescriptor()
     descriptorWrite[2].dstBinding = 2;
     descriptorWrite[2].dstArrayElement = 0;
     descriptorWrite[2].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-    descriptorWrite[2].descriptorCount = spriteTextures.textures.size();
+    descriptorWrite[2].descriptorCount = sprites.textures.size();
     descriptorWrite[2].pImageInfo = textureImageInfo;
 
     vkUpdateDescriptorSets(device,
@@ -2554,28 +2602,28 @@ bool VulkanApp::resetCommandBuffer(uint32_t i)
         vkCmdPushConstants(b, shipPipelineLayout,
                            VK_SHADER_STAGE_VERTEX_BIT, 0,
                            sizeof(shipTransform), &shipTransform);
-        uint32_t idx = spriteTextures.shipTextureIndex;
+        uint32_t idx = sprites.shipTextureIndex;
         vkCmdPushConstants(b, shipPipelineLayout,
                            VK_SHADER_STAGE_FRAGMENT_BIT,
                            vertexPushConstantsSize,
                            sizeof(idx), &idx);
     }
 
-    buffers[0] = {shipVertex.buffer};
+    buffers[0] = {spriteVertex.buffer};
     offsets[0] = {0};
     vkCmdBindVertexBuffers(b, 0, 1, buffers, offsets);
     vkCmdBindDescriptorSets(b, VK_PIPELINE_BIND_POINT_GRAPHICS,
                             shipPipelineLayout, 0, 1,
                             &shipDescriptor.set, 0, nullptr);
 
-    vkCmdDraw(b, 6, 1, 0, 0);
+    vkCmdDraw(b, 6, 1, sprites.shipTextureIndex * 6, 0);
     if (GLFW_PRESS == glfwGetKey(window, GLFW_KEY_UP)) {
-        uint32_t idx = spriteTextures.shipEngineTextureIndex;
+        uint32_t idx = sprites.shipEngineTextureIndex;
         vkCmdPushConstants(b, shipPipelineLayout,
                            VK_SHADER_STAGE_FRAGMENT_BIT,
                            vertexPushConstantsSize,
                            sizeof(idx), &idx);
-        vkCmdDraw(b, 6, 1, 6, 0);
+        vkCmdDraw(b, 6, 1, sprites.shipEngineTextureIndex * 6, 0);
     }
     if (!asteroidStates.empty()) {
         uint32_t texIndices[asteroidStates.size()];
@@ -2592,7 +2640,20 @@ bool VulkanApp::resetCommandBuffer(uint32_t i)
                            VK_SHADER_STAGE_FRAGMENT_BIT,
                            vertexPushConstantsSize,
                            sizeof(texIndices), texIndices);
-        vkCmdDraw(b, 6, asteroidStates.size(), 12, 0);
+        vkCmdDraw(b, 6, asteroidStates.size(),
+                  sprites.asteroidTextureStartIndex * 6, 0);
+    }
+    if (bulletState.live) {
+        MyMatrix bulletTransform = bulletState.getTransform();
+        vkCmdPushConstants(b, shipPipelineLayout,
+                           VK_SHADER_STAGE_VERTEX_BIT, 0,
+                           sizeof(bulletTransform), &bulletTransform);
+        uint32_t idx = sprites.shipBulletTextureIndex;
+        vkCmdPushConstants(b, shipPipelineLayout,
+                           VK_SHADER_STAGE_FRAGMENT_BIT,
+                           vertexPushConstantsSize,
+                           sizeof(idx), &idx);
+        vkCmdDraw(b, 6, 1, sprites.shipBulletTextureIndex * 6, 0);
     }
 
     vkCmdEndRenderPass(b);
@@ -2617,9 +2678,10 @@ void VulkanApp::spawnNewAsteroid()
                                 -getMinY() - asteroidSize[1] / 2.0f,
                                 0.0f};
 
-        MyAABB2 newAsteroidAABB = newAsteroid.getAABB(asteroidSize);
+        MyAABB2 newAsteroidAABB = getAABB(asteroidSize, newAsteroid.position);
 
-        if (newAsteroidAABB.overlap(shipState.getAABB(shipSize)))
+        if (newAsteroidAABB.overlap(getAABB(shipSize,
+                                            shipState.getPosition())))
             continue;
 
         // Generate velocity
@@ -2651,8 +2713,8 @@ void VulkanApp::spawnNewAsteroid()
 #endif
 
         uniform_int_distribution<uint32_t> asteroidTextures{
-                                   spriteTextures.asteroidTextureStartIndex,
-                                   spriteTextures.asteroidTextureEndIndex};
+                                   sprites.asteroidTextureStartIndex,
+                                   sprites.asteroidTextureEndIndex};
         newAsteroid.textureIndex = asteroidTextures(randomGen);
 
         // radius of the collision sphere is the size of the y axis
@@ -2707,6 +2769,25 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime,
         spawnNewAsteroid();
     }
 #endif
+    if (bulletState.live) {
+        bulletState.update(dt, this);
+    }
+    else if (GLFW_PRESS == glfwGetKey(window, GLFW_KEY_SPACE)) {
+        // We should start with the same orientation as the ship but the
+        // model is not facing the same way.  XXX maybe flip the vertices
+        MyQuaternion oneMore;
+        oneMore.rotateZ(M_PI);
+        bulletState.orientation = shipState.orientation * oneMore;
+
+        MyPoint firingDirection(0.0f, -1.0f, 0.0f);
+        firingDirection = firingDirection.transform(shipState.orientation);
+        firingDirection.normalize();
+        const float disp = shipSize[1] / 2.0f + bulletSize[1] / 2.0f;
+
+        bulletState.position = shipState.position + firingDirection * disp;
+        bulletState.velocity = firingDirection * 0.5f;
+        bulletState.live = true;
+    }
 
     for (uint32_t i = 0; i < asteroidStates.size(); ++i) {
         for (uint32_t j = (i+1) ; j < asteroidStates.size(); ++j) {
@@ -2815,7 +2896,7 @@ void VulkanApp::cleanupSwapChain()
     vkDestroyRenderPass(device, renderPass, nullptr);
     vkDestroyShaderModule(device, backgroundVertexShader, nullptr);
     vkDestroyShaderModule(device, backgroundFragmentShader, nullptr);
-    vkDestroyShaderModule(device, shipVertexShader, nullptr);
+    vkDestroyShaderModule(device, spriteVertexShader, nullptr);
     vkDestroyShaderModule(device, shipFragmentShader, nullptr);
     for (auto& swpe : swapChain) {
         vkDestroyFence(device, swpe.fence, nullptr);
@@ -2835,8 +2916,8 @@ void VulkanApp::cleanupSwapChain()
     }
     backgroundTexture.cleanup(device);
     vkDestroySampler(device, backgroundSampler, nullptr);
-    for (uint32_t i = 0 ; i < spriteTextures.textures.size(); ++i) {
-        spriteTextures.textures[i].cleanup(device);
+    for (uint32_t i = 0 ; i < sprites.textures.size(); ++i) {
+        sprites.textures[i].cleanup(device);
     }
     vkDestroySampler(device, shipSampler, nullptr);
 
@@ -2849,7 +2930,7 @@ void VulkanApp::cleanup()
     vkDestroyCommandPool(device, commandPool, nullptr);
 
     backgroundVertex.cleanup(device);
-    shipVertex.cleanup(device);
+    spriteVertex.cleanup(device);
 
     //vkDestroyBuffer(device, cubeTransformsUniformBuffer, nullptr);
     //vkUnmapMemory(device, cubeTransformsUniformBufferMemory);
@@ -3036,19 +3117,21 @@ bool VulkanApp::createTexture(struct Texture *texture,
 }
 
 bool VulkanApp::createTextures() {
-    uint32_t shipIdx = spriteTextures.shipTextureIndex;
-    uint32_t engineIdx = spriteTextures.shipEngineTextureIndex;
-    uint32_t asteroidStart = spriteTextures.asteroidTextureStartIndex;
+    uint32_t shipIdx = sprites.shipTextureIndex;
+    uint32_t engineIdx = sprites.shipEngineTextureIndex;
+    uint32_t bulletIdx = sprites.shipBulletTextureIndex;
+    uint32_t asteroidStart = sprites.asteroidTextureStartIndex;
     if (!createTexture(&backgroundTexture, "assets/background.png")
-     || !createTexture(&spriteTextures.textures[shipIdx], "assets/ship.png")
-     || !createTexture(&spriteTextures.textures[engineIdx], "assets/engine1.png")
-     || !createTexture(&spriteTextures.textures[asteroidStart],
+     || !createTexture(&sprites.textures[shipIdx], "assets/ship.png")
+     || !createTexture(&sprites.textures[engineIdx], "assets/engine1.png")
+     || !createTexture(&sprites.textures[bulletIdx], "assets/bullet.png")
+     || !createTexture(&sprites.textures[asteroidStart],
                        "assets/asteroid_v1.png")
-     || !createTexture(&spriteTextures.textures[asteroidStart + 1],
+     || !createTexture(&sprites.textures[asteroidStart + 1],
                        "assets/asteroid_v2.png")
-     || !createTexture(&spriteTextures.textures[asteroidStart + 2],
+     || !createTexture(&sprites.textures[asteroidStart + 2],
                        "assets/asteroid_v3.png")
-     || !createTexture(&spriteTextures.textures[asteroidStart + 3],
+     || !createTexture(&sprites.textures[asteroidStart + 3],
                        "assets/asteroid_v4.png")) {
         return false;
     }
