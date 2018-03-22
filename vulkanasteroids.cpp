@@ -396,6 +396,7 @@ class VulkanApp
 
 void VulkanApp::resolveAsteroidCollisions(AsteroidState& a, AsteroidState& b)
 {
+    // XXX this does not handle when we wrapped around the screen
     MyPoint segment = b.position - a.position;
     const float len = segment.length();
 
@@ -2680,6 +2681,7 @@ void VulkanApp::spawnNewAsteroid()
 
         MyAABB2 newAsteroidAABB = getAABB(asteroidSize, newAsteroid.position);
 
+        // XXX check overlap with other asteroids
         if (newAsteroidAABB.overlap(getAABB(shipSize,
                                             shipState.getPosition())))
             continue;
