@@ -241,6 +241,20 @@ class VulkanApp
     uniform_int_distribution<> asteroidSpawnRand{1, 30};
     double lastSpawnRandCheck = 0.0;
 
+    struct Explosions {
+        Texture atlas;
+        VertexBuffer vertex;
+        VkDescriptorSetLayout layout;
+        Descriptor desc;
+
+        VkSampler sampler;
+        VkShaderModule vert;
+        VkShaderModule frag;
+        VkPipelineLayout pipelineLayout;
+        VkPipeline pipeline;
+    } explosions;
+
+
     vector<VkFramebuffer> frameBuffers;
 
     VkCommandPool commandPool;
@@ -302,6 +316,7 @@ class VulkanApp
     bool createDescriptors();
     bool createBackgroundDescriptor();
     bool createShipDescriptor();
+    bool createExplosionDescriptor();
     bool createTextures();
     bool setupDebugCallback();
     bool createShaders(VkShaderModule *vs, VkShaderModule *fs,
@@ -1443,6 +1458,7 @@ bool VulkanApp::createShaders(VkShaderModule *vs,
         printf("vkCreateShaderModule failed with %d\n", vkRet);
         return false;
     }
+
     return true;
 }
 
@@ -1450,7 +1466,9 @@ bool VulkanApp::loadShaders() {
     if (!createShaders(&backgroundVertexShader, &backgroundFragmentShader,
                        "vertex_background.spv", "fragment_background.spv")
      || !createShaders(&spriteVertexShader, &shipFragmentShader,
-                       "vertex_ship.spv", "fragment_ship.spv")) {
+                       "vertex_ship.spv", "fragment_ship.spv")
+     || !createShaders(&explosions.vert, &explosions.frag,
+                       "vertex_explosions.spv", "fragment_explosions.spv")) {
         return false;
     }
     return true;
@@ -1566,7 +1584,6 @@ bool VulkanApp::createRenderPass()
 
 bool VulkanApp::createDescriptorSetLayout()
 {
-    // Right now we use only one layout for all - XXX may change later
     VkDescriptorSetLayoutBinding layout[3];
     memset(layout, 0, sizeof(layout));
     layout[0].binding = 0;
@@ -1611,6 +1628,24 @@ bool VulkanApp::createDescriptorSetLayout()
         printf("vkCreateDescriptorSetLayout() failed with %d", vkRet);
         return false;
     }
+
+    layout[1].binding = 1;
+    layout[1].descriptorCount = 1;
+    layout[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    layout[1].pImmutableSamplers = nullptr;
+    layout[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 2;
+    layoutInfo.pBindings = layout;
+
+    vkRet = vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr,
+                                        &explosions.layout);
+    if (vkRet != VK_SUCCESS) {
+        printf("vkCreateDescriptorSetLayout() failed with %d", vkRet);
+        return false;
+    }
+
     return true;
 }
 
@@ -1758,10 +1793,11 @@ bool VulkanApp::createPipelines()
     colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
     colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    //colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    //colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
     colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-    //colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-    // Premultiplied
-    colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+
     colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
                                           VK_COLOR_COMPONENT_G_BIT |
                                           VK_COLOR_COMPONENT_B_BIT |
@@ -1867,6 +1903,52 @@ bool VulkanApp::createPipelines()
        printf("vkCreateGraphicsPipelines failed with ret %d\n", vkRet);
        return false;
     }
+
+    // particles pipeline
+    memset(&pushConstantsRanges, 0, sizeof(pushConstantsRanges));
+    pushConstantsRanges[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pushConstantsRanges[0].offset = 0;
+    pushConstantsRanges[0].size = sizeof(MyMatrix);
+    pushConstantsRanges[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    pushConstantsRanges[1].offset = sizeof(MyMatrix);
+    pushConstantsRanges[1].size = sizeof(int);
+
+    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipelineLayoutInfo.setLayoutCount = 1;
+    pipelineLayoutInfo.pSetLayouts = &explosions.layout;
+    pipelineLayoutInfo.pushConstantRangeCount = 2;
+    pipelineLayoutInfo.pPushConstantRanges = pushConstantsRanges;
+
+    vkRet = vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr,
+                                   &explosions.pipelineLayout);
+    if (vkRet != VK_SUCCESS) {
+       printf("vkCreatePipelineLayout failed with ret %d\n", vkRet);
+       return false;
+    }
+    pipelineInfo.layout = explosions.pipelineLayout;
+
+    // Change shaders
+    vertShaderStageInfo.sType =
+                           VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    vertShaderStageInfo.module = explosions.vert;
+    vertShaderStageInfo.pName = "main";
+
+    fragShaderStageInfo.sType =
+                           VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    fragShaderStageInfo.module = explosions.frag;
+    fragShaderStageInfo.pName = "main";
+    shaderStages[0] = vertShaderStageInfo;
+    shaderStages[1] = fragShaderStageInfo;
+
+    vkRet = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo,
+                                      nullptr, &explosions.pipeline);
+    if (vkRet != VK_SUCCESS) {
+       printf("vkCreateGraphicsPipelines failed with ret %d\n", vkRet);
+       return false;
+    }
+
     return true;
 }
 
@@ -2315,6 +2397,63 @@ bool VulkanApp::createVertexBuffers()
     memcpy(data, spriteVertex.vertices.data(), numBytes);
     vkUnmapMemory(device, spriteVertex.memory);
 
+    constexpr uint32_t numParticles = 64;
+#if 0
+    constexpr uint32_t rowSize = sqrt(numParticles);
+    explosions.vertex.vertices.resize(numParticles*6);
+    v = &explosions.vertex.vertices.front();
+    float radius = asteroidSize[0] / 4;
+    for (int i = 0; i < numParticles; ++i) {
+        const float particleSz = radius / numParticles / 2;
+
+        const int row = i / rowSize;
+        const int col = i % rowSize;
+
+        const float left = sz * (col - 2);
+        const float right = left + sz;
+        const float top = sz * (2 - row);
+        const float bottom = top - sz;
+
+        *(v++) = {MyPoint{left,  bottom, z}, red, 0.0f, 1.0f};
+        *(v++) = {MyPoint{right, bottom, z}, red, 1.0f, 1.0f};
+        *(v++) = {MyPoint{right,    top, z}, red, 1.0f, 0.0f};
+        // 2nd triangle
+        *(v++) = {MyPoint{left,  bottom, z}, red, 0.0f, 1.0f};
+        *(v++) = {MyPoint{right,    top, z}, red, 1.0f, 0.0f};
+        *(v++) = {MyPoint{left,     top, z}, red, 0.0f, 0.0f};
+    }
+#else
+    float partRadius = asteroidSize[0] / 2;
+    float partSize = asteroidSize[0] / 2;
+    uniform_real_distribution<float> coordGen(-partRadius,
+                                              partRadius - partSize);
+    explosions.vertex.vertices.resize(numParticles*6);
+    v = &explosions.vertex.vertices.front();
+    for (uint32_t i = 0; i < numParticles; ++i) {
+        const float left = coordGen(randomGen);
+        const float right = left + partSize;
+        const float bottom = coordGen(randomGen);
+        const float top = bottom + partSize;
+
+        *(v++) = {MyPoint{left,  bottom, z}, red, 0.0f, 1.0f};
+        *(v++) = {MyPoint{right, bottom, z}, red, 1.0f, 1.0f};
+        *(v++) = {MyPoint{right,    top, z}, red, 1.0f, 0.0f};
+        // 2nd triangle
+        *(v++) = {MyPoint{left,  bottom, z}, red, 0.0f, 1.0f};
+        *(v++) = {MyPoint{right,    top, z}, red, 1.0f, 0.0f};
+        *(v++) = {MyPoint{left,     top, z}, red, 0.0f, 0.0f};
+    }
+#endif
+    numBytes = explosions.vertex.vertices.size() *
+               sizeof(explosions.vertex.vertices.front());
+    if (!createBuffer(&explosions.vertex.buffer, &explosions.vertex.memory,
+                      numBytes, vertexUsage, memFlags, false)) {
+        return false;
+    }
+    vkMapMemory(device, explosions.vertex.memory, 0, numBytes, 0, &data);
+    memcpy(data, explosions.vertex.vertices.data(), numBytes);
+    vkUnmapMemory(device, explosions.vertex.memory);
+
     return true;
 }
 
@@ -2530,10 +2669,80 @@ bool VulkanApp::createShipDescriptor()
     return true;
 }
 
+bool VulkanApp::createExplosionDescriptor()
+{
+    VkDescriptorPoolSize poolSizes[2];
+    memset(&poolSizes, 0, sizeof(poolSizes));
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSizes[0].descriptorCount = 1;
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[1].descriptorCount = 1;
+
+    VkDescriptorPoolCreateInfo poolInfo = {};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.poolSizeCount = sizeof(poolSizes)/sizeof(*poolSizes);
+    poolInfo.pPoolSizes = poolSizes;
+    poolInfo.maxSets = 1;
+
+    VkResult vkRet = vkCreateDescriptorPool(device, &poolInfo, nullptr,
+                                            &explosions.desc.pool);
+    if (vkRet != VK_SUCCESS) {
+        printf("vkCreateDescriptorPool failed with %d\n", vkRet);
+        return false;
+    }
+
+    VkDescriptorSetAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = explosions.desc.pool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &explosions.layout;
+
+    vkRet = vkAllocateDescriptorSets(device, &allocInfo, &explosions.desc.set);
+    if (vkRet != VK_SUCCESS) {
+        printf("vkAllocateDescriptorSets failed with %d\n", vkRet);
+        return false;
+    }
+
+    VkDescriptorBufferInfo bufferInfo[1];
+    memset(bufferInfo, 0, sizeof(bufferInfo));
+    bufferInfo[0].buffer = vpUniformBuffer;
+    bufferInfo[0].offset = 0;
+    bufferInfo[0].range = sizeof(vp);
+
+    VkDescriptorImageInfo imageInfo = {};
+    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    imageInfo.imageView = explosions.atlas.view;
+    imageInfo.sampler = explosions.sampler;
+
+    VkWriteDescriptorSet descriptorWrite[2];
+    memset(descriptorWrite, 0, sizeof(descriptorWrite));
+    descriptorWrite[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrite[0].dstSet = explosions.desc.set;
+    descriptorWrite[0].dstBinding = 0;
+    descriptorWrite[0].dstArrayElement = 0;
+    descriptorWrite[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    descriptorWrite[0].descriptorCount = 1;
+    descriptorWrite[0].pBufferInfo = bufferInfo;
+    descriptorWrite[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrite[1].dstSet = explosions.desc.set;
+    descriptorWrite[1].dstBinding = 1;
+    descriptorWrite[1].dstArrayElement = 0;
+    descriptorWrite[1].descriptorType =
+                                    VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    descriptorWrite[1].descriptorCount = 1;
+    descriptorWrite[1].pImageInfo = &imageInfo;
+
+    vkUpdateDescriptorSets(device,
+                           sizeof(descriptorWrite)/sizeof(*descriptorWrite),
+                           descriptorWrite, 0, nullptr);
+    return true;
+}
+
 bool VulkanApp::createDescriptors()
 {
     if (!createBackgroundDescriptor()
-     || !createShipDescriptor()) {
+     || !createShipDescriptor()
+     || !createExplosionDescriptor()) {
         return false;
     }
     return true;
@@ -2656,6 +2865,43 @@ bool VulkanApp::resetCommandBuffer(uint32_t i)
                            sizeof(idx), &idx);
         vkCmdDraw(b, 6, 1, sprites.shipBulletTextureIndex * 6, 0);
     }
+    // XXX particles
+    static double startExplosion = 0.0;
+    vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                      explosions.pipeline);
+    buffers[0] = {explosions.vertex.buffer};
+    offsets[0] = {0};
+    vkCmdBindVertexBuffers(b, 0, 1, buffers, offsets);
+    vkCmdBindDescriptorSets(b, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            explosions.pipelineLayout, 0, 1,
+                            &explosions.desc.set, 0, nullptr);
+    if (glfwGetTime() > (startExplosion + 4.0)) {
+        // new
+        MyMatrix t;
+        vkCmdPushConstants(b, explosions.pipelineLayout,
+                           VK_SHADER_STAGE_VERTEX_BIT, 0,
+                           sizeof(t), &t);
+        uint32_t idx = 0;
+        vkCmdPushConstants(b, explosions.pipelineLayout,
+                           VK_SHADER_STAGE_FRAGMENT_BIT,
+                           sizeof(t),
+                           sizeof(idx), &idx);
+        vkCmdDraw(b, explosions.vertex.vertices.size(), 1, 0, 0);
+        startExplosion = glfwGetTime();
+    }
+    else if (glfwGetTime() <= (startExplosion + 2.0)) {
+        uint32_t idx = rint((glfwGetTime() - startExplosion) * 32);
+        MyMatrix t;
+        vkCmdPushConstants(b, explosions.pipelineLayout,
+                           VK_SHADER_STAGE_VERTEX_BIT, 0,
+                           sizeof(t), &t);
+        vkCmdPushConstants(b, explosions.pipelineLayout,
+                           VK_SHADER_STAGE_FRAGMENT_BIT,
+                           sizeof(t),
+                           sizeof(idx), &idx);
+        vkCmdDraw(b, explosions.vertex.vertices.size(), 1, 0, 0);
+    }
+
 
     vkCmdEndRenderPass(b);
 
@@ -2921,7 +3167,9 @@ void VulkanApp::cleanupSwapChain()
     for (uint32_t i = 0 ; i < sprites.textures.size(); ++i) {
         sprites.textures[i].cleanup(device);
     }
+    explosions.atlas.cleanup(device);
     vkDestroySampler(device, shipSampler, nullptr);
+    vkDestroySampler(device, explosions.sampler, nullptr);
 
     vkDestroySwapchainKHR(device, vkSwapChain, nullptr);
 }
@@ -2933,6 +3181,7 @@ void VulkanApp::cleanup()
 
     backgroundVertex.cleanup(device);
     spriteVertex.cleanup(device);
+    explosions.vertex.cleanup(device);
 
     //vkDestroyBuffer(device, cubeTransformsUniformBuffer, nullptr);
     //vkUnmapMemory(device, cubeTransformsUniformBufferMemory);
@@ -2944,8 +3193,10 @@ void VulkanApp::cleanup()
 
     vkDestroyDescriptorPool(device, backgroundDescriptor.pool, nullptr);
     vkDestroyDescriptorPool(device, shipDescriptor.pool, nullptr);
+    vkDestroyDescriptorPool(device, explosions.desc.pool, nullptr);
     vkDestroyDescriptorSetLayout(device, backgroundDescriptorLayout, nullptr);
     vkDestroyDescriptorSetLayout(device, shipDescriptorLayout, nullptr);
+    vkDestroyDescriptorSetLayout(device, explosions.layout, nullptr);
 
     vkDestroySurfaceKHR(instance, surface, nullptr);
     vkDestroyDevice(device, nullptr);
@@ -3134,7 +3385,8 @@ bool VulkanApp::createTextures() {
      || !createTexture(&sprites.textures[asteroidStart + 2],
                        "assets/asteroid_v3.png")
      || !createTexture(&sprites.textures[asteroidStart + 3],
-                       "assets/asteroid_v4.png")) {
+                       "assets/asteroid_v4.png")
+     || !createTexture(&explosions.atlas, "assets/explosion_atlas.png")) {
         return false;
     }
 
@@ -3163,6 +3415,11 @@ bool VulkanApp::createTextures() {
         return false;
     }
     vkRet = vkCreateSampler(device, &samplerInfo, nullptr, &shipSampler);
+    if (vkRet != VK_SUCCESS) {
+        printf("vkCreateSampler failed with %d\n", vkRet);
+        return false;
+    }
+    vkRet = vkCreateSampler(device, &samplerInfo, nullptr, &explosions.sampler);
     if (vkRet != VK_SUCCESS) {
         printf("vkCreateSampler failed with %d\n", vkRet);
         return false;
