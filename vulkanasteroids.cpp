@@ -28,10 +28,10 @@ struct MyAABB2 {
 
     bool overlap(const MyAABB2& rhs) const
     {
-        if (min.x >= rhs.max.x
-         || max.x <= rhs.min.x
-         || min.y >= rhs.min.y
-         || max.y <= rhs.max.y)
+        if (min.x > rhs.max.x
+         || max.x < rhs.min.x
+         || min.y > rhs.max.y
+         || max.y < rhs.min.y)
             return false;
         return true;
     }
@@ -252,6 +252,15 @@ class VulkanApp
         VkShaderModule frag;
         VkPipelineLayout pipelineLayout;
         VkPipeline pipeline;
+
+        struct CurrentExplosions {
+            MyPoint center;
+            double start;
+
+            CurrentExplosions(MyPoint c, double s)
+                : center(c), start(s) {}
+        };
+        vector<CurrentExplosions> actives;
     } explosions;
 
 
@@ -310,7 +319,7 @@ class VulkanApp
     bool createCommandPool();
     bool createCommandBuffers();
     bool setupCommandBuffers();
-    bool resetCommandBuffer(uint32_t i);
+    bool resetCommandBuffer(uint32_t i, double currentTime);
     bool createVertexBuffers();
     bool createUniformBuffers();
     bool createDescriptors();
@@ -359,6 +368,7 @@ class VulkanApp
     void spawnNewAsteroid();
     static MyAABB2 getAABB(float *, MyPoint position);
     void resolveAsteroidCollisions(AsteroidState& a, AsteroidState& b);
+    void checkForHits();
     void processCollisions(AsteroidState& a, AsteroidState& b);
     double getDeltaVelocity(const AsteroidState& a,
                             const MyPoint& relativeContactPos,
@@ -452,6 +462,19 @@ void VulkanApp::resolveAsteroidCollisions(AsteroidState& a, AsteroidState& b)
     b.position += (b.velocity) * -s;
     a.position.print("adj a pos ");
     b.position.print("adj b pos ");
+}
+
+void VulkanApp::checkForHits()
+{
+    MyAABB2 b = getAABB(bulletSize, bulletState.position);
+    for (uint32_t i = 0; i < asteroidStates.size(); ++i) {
+        MyAABB2 a = getAABB(asteroidSize, asteroidStates[i].position);
+
+        if (b.overlap(a)) {
+            explosions.actives.emplace_back(asteroidStates[i].position, 0.0);
+            break;
+        }
+    }
 }
 
 double VulkanApp::getDeltaVelocity(const AsteroidState& a,
@@ -627,10 +650,10 @@ MyMatrix VulkanApp::ShipState::getTransform() const
 MyAABB2 VulkanApp::getAABB(float *sizes, MyPoint position)
 {
     MyAABB2 a;
-    a.min.x = max(0.0f, position.x - sizes[0] / 2.0f);
-    a.max.x = max(0.0f, position.x + sizes[0] / 2.0f);
-    a.min.y = max(0.0f, position.y - sizes[1] / 2.0f);
-    a.max.y = max(0.0f, position.y + sizes[1] / 2.0f);
+    a.min.x = position.x - sizes[0] / 2.0f;
+    a.max.x = position.x + sizes[0] / 2.0f;
+    a.min.y = position.y - sizes[1] / 2.0f;
+    a.max.y = position.y + sizes[1] / 2.0f;
     return a;
 }
 
@@ -2751,13 +2774,13 @@ bool VulkanApp::createDescriptors()
 bool VulkanApp::setupCommandBuffers()
 {
     for (uint32_t i = 0; i < commandBuffers.size(); ++i) {
-        if (!resetCommandBuffer(i))
+        if (!resetCommandBuffer(i, 0.0))
              return false;
     }
     return true;
 }
 
-bool VulkanApp::resetCommandBuffer(uint32_t i)
+bool VulkanApp::resetCommandBuffer(uint32_t i, double currentTime)
 {
     VkCommandBuffer& b = commandBuffers[i];
     VkCommandBufferBeginInfo beginInfo = {};
@@ -2865,8 +2888,6 @@ bool VulkanApp::resetCommandBuffer(uint32_t i)
                            sizeof(idx), &idx);
         vkCmdDraw(b, 6, 1, sprites.shipBulletTextureIndex * 6, 0);
     }
-    // XXX particles
-    static double startExplosion = 0.0;
     vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
                       explosions.pipeline);
     buffers[0] = {explosions.vertex.buffer};
@@ -2875,31 +2896,29 @@ bool VulkanApp::resetCommandBuffer(uint32_t i)
     vkCmdBindDescriptorSets(b, VK_PIPELINE_BIND_POINT_GRAPHICS,
                             explosions.pipelineLayout, 0, 1,
                             &explosions.desc.set, 0, nullptr);
-    if (glfwGetTime() > (startExplosion + 4.0)) {
-        // new
-        MyMatrix t;
+    auto it = explosions.actives.begin();
+    while (it != explosions.actives.end()) {
+        if (it->start == 0.0) {
+            it->start = currentTime;
+        }
+        if (currentTime - it->start > 2.0) {
+            it = explosions.actives.erase(it);
+            continue;
+        }
+        MyMatrix transform;
+        transform.set(0, 3, it->center.x);
+        transform.set(1, 3, it->center.y);
+        transform.set(2, 3, it->center.z);
         vkCmdPushConstants(b, explosions.pipelineLayout,
                            VK_SHADER_STAGE_VERTEX_BIT, 0,
-                           sizeof(t), &t);
-        uint32_t idx = 0;
+                           sizeof(transform), &transform);
+        uint32_t idx = rint((currentTime - it->start) * 32);
         vkCmdPushConstants(b, explosions.pipelineLayout,
                            VK_SHADER_STAGE_FRAGMENT_BIT,
-                           sizeof(t),
+                           sizeof(transform),
                            sizeof(idx), &idx);
         vkCmdDraw(b, explosions.vertex.vertices.size(), 1, 0, 0);
-        startExplosion = glfwGetTime();
-    }
-    else if (glfwGetTime() <= (startExplosion + 2.0)) {
-        uint32_t idx = rint((glfwGetTime() - startExplosion) * 32);
-        MyMatrix t;
-        vkCmdPushConstants(b, explosions.pipelineLayout,
-                           VK_SHADER_STAGE_VERTEX_BIT, 0,
-                           sizeof(t), &t);
-        vkCmdPushConstants(b, explosions.pipelineLayout,
-                           VK_SHADER_STAGE_FRAGMENT_BIT,
-                           sizeof(t),
-                           sizeof(idx), &idx);
-        vkCmdDraw(b, explosions.vertex.vertices.size(), 1, 0, 0);
+        ++it;
     }
 
 
@@ -3050,11 +3069,13 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime,
             resolveAsteroidCollisions(asteroidStates[i], asteroidStates[j]);
         }
     }
-
+    if (bulletState.live && !asteroidStates.empty()) {
+        checkForHits();
+    }
 
     shipState.update(currentTime, this);
 
-    resetCommandBuffer(idx);
+    resetCommandBuffer(idx, currentTime);
 
     VkResult vkRet;
     uint32_t imageIndex;
@@ -3139,13 +3160,17 @@ void VulkanApp::cleanupSwapChain()
     }
     vkDestroyPipeline(device, backgroundPipeline, nullptr);
     vkDestroyPipeline(device, shipPipeline, nullptr);
+    vkDestroyPipeline(device, explosions.pipeline, nullptr);
     vkDestroyPipelineLayout(device, backgroundPipelineLayout, nullptr);
     vkDestroyPipelineLayout(device, shipPipelineLayout, nullptr);
+    vkDestroyPipelineLayout(device, explosions.pipelineLayout, nullptr);
     vkDestroyRenderPass(device, renderPass, nullptr);
     vkDestroyShaderModule(device, backgroundVertexShader, nullptr);
     vkDestroyShaderModule(device, backgroundFragmentShader, nullptr);
     vkDestroyShaderModule(device, spriteVertexShader, nullptr);
     vkDestroyShaderModule(device, shipFragmentShader, nullptr);
+    vkDestroyShaderModule(device, explosions.frag, nullptr);
+    vkDestroyShaderModule(device, explosions.vert, nullptr);
     for (auto& swpe : swapChain) {
         vkDestroyFence(device, swpe.fence, nullptr);
         vkDestroySemaphore(device, swpe.imageAvailableSem, nullptr);
