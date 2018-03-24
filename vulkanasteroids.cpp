@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cmath>
+#include <float.h>
 #include <vector>
 #include <random>
 
@@ -466,11 +467,28 @@ void VulkanApp::resolveAsteroidCollisions(AsteroidState& a, AsteroidState& b)
 
 void VulkanApp::checkForHits()
 {
-    MyAABB2 b = getAABB(bulletSize, bulletState.position);
+    MyPoint vertices[6];
+    const uint32_t startIdx = 6 * sprites.shipBulletTextureIndex;
+    for (uint32_t i = 0; i < 6; ++i) {
+        const Vertex v = spriteVertex.vertices[startIdx + i];
+        vertices[i] = v.pos.transform(bulletState.orientation);
+        vertices[i] += bulletState.position;
+    }
+
+    MyAABB2 bullet;
+    bullet.min = {FLT_MAX, FLT_MAX};
+    bullet.max = { -FLT_MAX, -FLT_MAX};
+    for (uint32_t i = 0; i < 6; ++i) {
+        bullet.min.x = min(bullet.min.x, vertices[i].x);
+        bullet.min.y = min(bullet.min.y, vertices[i].y);
+
+        bullet.max.x = max(bullet.max.x, vertices[i].x);
+        bullet.max.y = max(bullet.max.y, vertices[i].y);
+    }
     for (uint32_t i = 0; i < asteroidStates.size(); ++i) {
         MyAABB2 a = getAABB(asteroidSize, asteroidStates[i].position);
 
-        if (b.overlap(a)) {
+        if (bullet.overlap(a)) {
             explosions.actives.emplace_back(asteroidStates[i].position, 0.0);
             break;
         }
