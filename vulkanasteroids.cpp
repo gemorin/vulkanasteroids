@@ -490,6 +490,7 @@ void VulkanApp::checkForHits()
 
         if (bullet.overlap(a)) {
             explosions.actives.emplace_back(asteroidStates[i].position, 0.0);
+            bulletState.live = false;
             break;
         }
     }
@@ -2438,7 +2439,7 @@ bool VulkanApp::createVertexBuffers()
     memcpy(data, spriteVertex.vertices.data(), numBytes);
     vkUnmapMemory(device, spriteVertex.memory);
 
-    constexpr uint32_t numParticles = 64;
+    constexpr uint32_t numParticles = 16;
 #if 0
     constexpr uint32_t rowSize = sqrt(numParticles);
     explosions.vertex.vertices.resize(numParticles*6);
@@ -2464,8 +2465,8 @@ bool VulkanApp::createVertexBuffers()
         *(v++) = {MyPoint{left,     top, z}, red, 0.0f, 0.0f};
     }
 #else
-    float partRadius = asteroidSize[0] / 2;
-    float partSize = asteroidSize[0] / 2;
+    float partRadius = asteroidSize[0] / 4;
+    float partSize = asteroidSize[0] / 4;
     uniform_real_distribution<float> coordGen(-partRadius,
                                               partRadius - partSize);
     explosions.vertex.vertices.resize(numParticles*6);
