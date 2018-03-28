@@ -174,6 +174,9 @@ class VulkanApp
         double rotStartTime = 0.0f;
         bool inRotation = false;
 
+        bool inHitAnim = false;
+        double startHitAnim = 0.0;
+
         ShipState() { orientation.rotateZ(M_PI); }
 
         void initiateRotation(bool pos, double currentTime);
@@ -211,6 +214,8 @@ class VulkanApp
     constexpr static uint32_t maxNumAsteroids = NUM_MAX_ASTEROIDS;
     constexpr static uint32_t vertexPushConstantsSize = maxNumAsteroids *
                                                         sizeof(MyMatrix);
+    constexpr static uint32_t fragTexPushConstantSize = maxNumAsteroids *
+                                                        sizeof(int);
     struct SpriteTextures {
         static constexpr uint32_t shipTextureIndex = 0;
         static constexpr uint32_t shipEngineTextureIndex = 1;
@@ -239,7 +244,7 @@ class VulkanApp
 
     vector<AsteroidState> asteroidStates;
     float asteroidSize[2];
-    uniform_int_distribution<> asteroidSpawnRand{1, 30};
+    uniform_int_distribution<> asteroidSpawnRand{1, 5};
     double lastSpawnRandCheck = 0.0;
 
     struct Explosions {
@@ -367,9 +372,10 @@ class VulkanApp
     }
 
     void spawnNewAsteroid();
-    static MyAABB2 getAABB(float *, MyPoint position);
+    static MyAABB2 getSphereAABB(float *, MyPoint position);
     void resolveAsteroidCollisions(AsteroidState& a, AsteroidState& b);
-    void checkForHits();
+    void checkForBulletHit();
+    void checkForAsteroidHit(double currentTime);
     void processCollisions(AsteroidState& a, AsteroidState& b);
     double getDeltaVelocity(const AsteroidState& a,
                             const MyPoint& relativeContactPos,
@@ -465,7 +471,7 @@ void VulkanApp::resolveAsteroidCollisions(AsteroidState& a, AsteroidState& b)
     b.position.print("adj b pos ");
 }
 
-void VulkanApp::checkForHits()
+void VulkanApp::checkForBulletHit()
 {
     MyPoint vertices[6];
     const uint32_t startIdx = 6 * sprites.shipBulletTextureIndex;
@@ -486,11 +492,46 @@ void VulkanApp::checkForHits()
         bullet.max.y = max(bullet.max.y, vertices[i].y);
     }
     for (uint32_t i = 0; i < asteroidStates.size(); ++i) {
-        MyAABB2 a = getAABB(asteroidSize, asteroidStates[i].position);
+        MyAABB2 a = getSphereAABB(asteroidSize, asteroidStates[i].position);
 
         if (bullet.overlap(a)) {
             explosions.actives.emplace_back(asteroidStates[i].position, 0.0);
+            // smaller asteroids XXX
+            asteroidStates.erase(asteroidStates.begin() + i);
             bulletState.live = false;
+            break;
+        }
+    }
+}
+
+void VulkanApp::checkForAsteroidHit(double currentTime)
+{
+    MyPoint vertices[6];
+    const uint32_t startIdx = 6 * sprites.shipTextureIndex;
+    for (uint32_t i = 0; i < 6; ++i) {
+        const Vertex v = spriteVertex.vertices[startIdx + i];
+        vertices[i] = v.pos.transform(shipState.orientation);
+        vertices[i] += shipState.position;
+    }
+
+    MyAABB2 ship;
+    ship.min = {FLT_MAX, FLT_MAX};
+    ship.max = { -FLT_MAX, -FLT_MAX};
+    for (uint32_t i = 0; i < 6; ++i) {
+        ship.min.x = min(ship.min.x, vertices[i].x);
+        ship.min.y = min(ship.min.y, vertices[i].y);
+
+        ship.max.x = max(ship.max.x, vertices[i].x);
+        ship.max.y = max(ship.max.y, vertices[i].y);
+    }
+    for (uint32_t i = 0; i < asteroidStates.size(); ++i) {
+        MyAABB2 a = getSphereAABB(asteroidSize, asteroidStates[i].position);
+
+        if (ship.overlap(a)) {
+            shipState.inHitAnim = true;
+            shipState.startHitAnim = currentTime;
+            explosions.actives.emplace_back(asteroidStates[i].position, 0.0);
+            asteroidStates.erase(asteroidStates.begin() + i);
             break;
         }
     }
@@ -666,7 +707,7 @@ MyMatrix VulkanApp::ShipState::getTransform() const
     return ret;
 }
 
-MyAABB2 VulkanApp::getAABB(float *sizes, MyPoint position)
+MyAABB2 VulkanApp::getSphereAABB(float *sizes, MyPoint position)
 {
     MyAABB2 a;
     a.min.x = position.x - sizes[0] / 2.0f;
@@ -1901,7 +1942,7 @@ bool VulkanApp::createPipelines()
     }
 
     // Ship pipeline
-    VkPushConstantRange pushConstantsRanges[2];
+    VkPushConstantRange pushConstantsRanges[3];
     memset(&pushConstantsRanges, 0, sizeof(pushConstantsRanges));
     pushConstantsRanges[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     pushConstantsRanges[0].offset = 0;
@@ -1909,11 +1950,15 @@ bool VulkanApp::createPipelines()
     pushConstantsRanges[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     pushConstantsRanges[1].offset = vertexPushConstantsSize;
     pushConstantsRanges[1].size = sizeof(int) * maxNumAsteroids;
+    pushConstantsRanges[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    pushConstantsRanges[2].offset = vertexPushConstantsSize +
+                                    fragTexPushConstantSize;
+    pushConstantsRanges[2].size = sizeof(float);
 
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutInfo.setLayoutCount = 1;
     pipelineLayoutInfo.pSetLayouts = &shipDescriptorLayout;
-    pipelineLayoutInfo.pushConstantRangeCount = 2;
+    pipelineLayoutInfo.pushConstantRangeCount = 3;
     pipelineLayoutInfo.pPushConstantRanges = pushConstantsRanges;
 
     vkRet = vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr,
@@ -2465,8 +2510,8 @@ bool VulkanApp::createVertexBuffers()
         *(v++) = {MyPoint{left,     top, z}, red, 0.0f, 0.0f};
     }
 #else
-    float partRadius = asteroidSize[0] / 4;
-    float partSize = asteroidSize[0] / 4;
+    float partRadius = asteroidSize[0] / 2;
+    float partSize = asteroidSize[0] / 2;
     uniform_real_distribution<float> coordGen(-partRadius,
                                               partRadius - partSize);
     explosions.vertex.vertices.resize(numParticles*6);
@@ -2859,7 +2904,22 @@ bool VulkanApp::resetCommandBuffer(uint32_t i, double currentTime)
                            VK_SHADER_STAGE_FRAGMENT_BIT,
                            vertexPushConstantsSize,
                            sizeof(idx), &idx);
+        float colorFix = 0.0f;
+        if (shipState.inHitAnim) {
+            const double diff = currentTime - shipState.startHitAnim;
+            if (diff > 2.0) {
+                shipState.inHitAnim = false;
+            }
+            else {
+                colorFix = 1.0f - diff / 2.0f;
+            }
+        }
+        vkCmdPushConstants(b, shipPipelineLayout,
+                           VK_SHADER_STAGE_FRAGMENT_BIT,
+                           vertexPushConstantsSize + fragTexPushConstantSize,
+                           sizeof(float), &colorFix);
     }
+
 
     buffers[0] = {spriteVertex.buffer};
     offsets[0] = {0};
@@ -2869,6 +2929,11 @@ bool VulkanApp::resetCommandBuffer(uint32_t i, double currentTime)
                             &shipDescriptor.set, 0, nullptr);
 
     vkCmdDraw(b, 6, 1, sprites.shipTextureIndex * 6, 0);
+    float zero = 0.0f;
+    vkCmdPushConstants(b, shipPipelineLayout,
+                       VK_SHADER_STAGE_FRAGMENT_BIT,
+                       vertexPushConstantsSize + fragTexPushConstantSize,
+                       sizeof(float), &zero);
     if (GLFW_PRESS == glfwGetKey(window, GLFW_KEY_UP)) {
         uint32_t idx = sprites.shipEngineTextureIndex;
         vkCmdPushConstants(b, shipPipelineLayout,
@@ -2963,11 +3028,11 @@ void VulkanApp::spawnNewAsteroid()
                                 -getMinY() - asteroidSize[1] / 2.0f,
                                 0.0f};
 
-        MyAABB2 newAsteroidAABB = getAABB(asteroidSize, newAsteroid.position);
+        MyAABB2 newAsteroidAABB = getSphereAABB(asteroidSize, newAsteroid.position);
 
         // XXX check overlap with other asteroids
-        if (newAsteroidAABB.overlap(getAABB(shipSize,
-                                            shipState.getPosition())))
+        if (newAsteroidAABB.overlap(getSphereAABB(shipSize,
+                                    shipState.getPosition())))
             continue;
 
         // Generate velocity
@@ -3089,7 +3154,10 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime,
         }
     }
     if (bulletState.live && !asteroidStates.empty()) {
-        checkForHits();
+        checkForBulletHit();
+    }
+    if (!asteroidStates.empty()) {
+        checkForAsteroidHit(currentTime);
     }
 
     shipState.update(currentTime, this);

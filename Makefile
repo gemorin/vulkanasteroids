@@ -15,7 +15,7 @@ VULKANINCPATH=$(VULKANDIR)/external/MoltenVK/Package/Release/MoltenVK/include/
 VULKANLIBPATH=$(VULKANDIR)/build/loader
 SHADERCOMPILER=/Users/guillaume/dev/vulkansdk-macos-1.0.69.0/macOS/bin/glslc
 
-NUM_MAX_ASTEROIDS=4
+NUM_MAX_ASTEROIDS=10
 TEXTURE_ARRAY_SIZE=7
 MACROS=-DNUM_MAX_ASTEROIDS=$(NUM_MAX_ASTEROIDS) -DTEXTURE_ARRAY_SIZE=$(TEXTURE_ARRAY_SIZE)
 
@@ -36,17 +36,17 @@ fragment_background.spv: fragment_background.glsl
 vertex_background.spv: vertex_background.glsl
 	$(SHADERCOMPILER) -fshader-stage=vertex -o $@ $<
 
-fragment_ship.spv: fragment_ship.glsl
+fragment_ship.spv: fragment_ship.glsl Makefile
 	$(SHADERCOMPILER) $(MACROS) -fshader-stage=fragment -o $@ $<
 
-vertex_ship.spv: vertex_ship.glsl
+vertex_ship.spv: vertex_ship.glsl Makefile
 	$(SHADERCOMPILER) $(MACROS) -fshader-stage=vertex -o $@ $<
 
 fragment_explosions.spv: fragment_explosions.glsl
-	$(SHADERCOMPILER) $(MACROS) -fshader-stage=fragment -o $@ $<
+	$(SHADERCOMPILER) -fshader-stage=fragment -o $@ $<
 
 vertex_explosions.spv: vertex_explosions.glsl
-	$(SHADERCOMPILER) $(MACROS) -fshader-stage=vertex -o $@ $<
+	$(SHADERCOMPILER) -fshader-stage=vertex -o $@ $<
 
 clean:
 	rm -rf *.o vulkanasteroids vulkanasteroids.dSYM *.spv
