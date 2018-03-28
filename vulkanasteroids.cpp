@@ -15,6 +15,13 @@
 
 #include "mymath.h"
 
+#include "assets/stb_font_consolas_24_latin1.inl"
+#define STB_FONT_NAME stb_font_consolas_24_latin1
+#define STB_FONT_WIDTH STB_FONT_consolas_24_latin1_BITMAP_WIDTH
+#define STB_FONT_HEIGHT STB_FONT_consolas_24_latin1_BITMAP_HEIGHT
+#define STB_FIRST_CHAR STB_FONT_consolas_24_latin1_FIRST_CHAR
+#define STB_NUM_CHARS STB_FONT_consolas_24_latin1_NUM_CHARS
+
 using namespace std;
 
 static constexpr bool enableValidation = true;
@@ -244,7 +251,7 @@ class VulkanApp
 
     vector<AsteroidState> asteroidStates;
     float asteroidSize[2];
-    uniform_int_distribution<> asteroidSpawnRand{1, 5};
+    uniform_int_distribution<> asteroidSpawnRand{1, 3};
     double lastSpawnRandCheck = 0.0;
 
     struct Explosions {
@@ -269,6 +276,23 @@ class VulkanApp
         vector<CurrentExplosions> actives;
     } explosions;
 
+    // Overlay
+    struct {
+        Texture health;
+        VkSampler healthSampler;
+        Texture font;
+        stb_fontchar fontData[STB_NUM_CHARS]; // XXX
+        VkSampler fontSampler;
+        VertexBuffer vertex;
+        VkDescriptorSetLayout layout;
+        Descriptor desc;
+
+        VkSampler sampler;
+        VkShaderModule vert;
+        VkShaderModule frag;
+        VkPipelineLayout pipelineLayout;
+        VkPipeline pipeline;
+    } overlay;
 
     vector<VkFramebuffer> frameBuffers;
 
@@ -332,11 +356,13 @@ class VulkanApp
     bool createBackgroundDescriptor();
     bool createShipDescriptor();
     bool createExplosionDescriptor();
+    bool createOverlayDescriptor();
     bool createTextures();
     bool setupDebugCallback();
     bool createShaders(VkShaderModule *vs, VkShaderModule *fs,
                        const char *vertexPath, const char *fragPath);
     bool createTexture(struct Texture *texture, const char *filename);
+    bool loadFont(struct Texture *texture, stb_fontchar *data);
 
     void cleanup();
     void cleanupSwapChain();
@@ -1729,6 +1755,23 @@ bool VulkanApp::createDescriptorSetLayout()
         return false;
     }
 
+    layout[0].binding = 0;
+    layout[0].descriptorCount = 2;
+    layout[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    layout[0].pImmutableSamplers = nullptr;
+    layout[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 1;
+    layoutInfo.pBindings = layout;
+
+    vkRet = vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr,
+                                        &overlay.layout);
+    if (vkRet != VK_SUCCESS) {
+        printf("vkCreateDescriptorSetLayout() failed with %d", vkRet);
+        return false;
+    }
+
     return true;
 }
 
@@ -2665,6 +2708,64 @@ bool VulkanApp::createBackgroundDescriptor()
     return true;
 }
 
+bool VulkanApp::createOverlayDescriptor()
+{
+    VkDescriptorPoolSize poolSizes[1];
+    memset(&poolSizes, 0, sizeof(poolSizes));
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[0].descriptorCount = 2;
+
+    VkDescriptorPoolCreateInfo poolInfo = {};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.poolSizeCount = sizeof(poolSizes)/sizeof(*poolSizes);
+    poolInfo.pPoolSizes = poolSizes;
+    poolInfo.maxSets = 1;
+
+    VkResult vkRet = vkCreateDescriptorPool(device, &poolInfo, nullptr,
+                                            &overlay.desc.pool);
+    if (vkRet != VK_SUCCESS) {
+        printf("vkCreateDescriptorPool failed with %d\n", vkRet);
+        return false;
+    }
+
+    VkDescriptorSetAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = overlay.desc.pool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &overlay.layout;
+
+    vkRet = vkAllocateDescriptorSets(device, &allocInfo, &overlay.desc.set);
+    if (vkRet != VK_SUCCESS) {
+        printf("vkAllocateDescriptorSets failed with %d\n", vkRet);
+        return false;
+    }
+
+    VkDescriptorImageInfo imageInfo[2];
+    memset(imageInfo, 0, sizeof(imageInfo));
+    imageInfo[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    imageInfo[0].imageView = overlay.health.view;
+    imageInfo[0].sampler = overlay.healthSampler;
+    imageInfo[1].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    imageInfo[1].imageView = overlay.font.view;
+    imageInfo[1].sampler = overlay.fontSampler;
+
+    VkWriteDescriptorSet descriptorWrite[1];
+    memset(descriptorWrite, 0, sizeof(descriptorWrite));
+    descriptorWrite[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrite[0].dstSet = overlay.desc.set;
+    descriptorWrite[0].dstBinding = 0;
+    descriptorWrite[0].dstArrayElement = 0;
+    descriptorWrite[0].descriptorType =
+                                     VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    descriptorWrite[0].descriptorCount = 2;
+    descriptorWrite[0].pImageInfo = imageInfo;
+
+    vkUpdateDescriptorSets(device,
+                           sizeof(descriptorWrite)/sizeof(*descriptorWrite),
+                           descriptorWrite, 0, nullptr);
+    return true;
+}
+
 bool VulkanApp::createShipDescriptor()
 {
     VkDescriptorPoolSize poolSizes[3];
@@ -2829,7 +2930,8 @@ bool VulkanApp::createDescriptors()
 {
     if (!createBackgroundDescriptor()
      || !createShipDescriptor()
-     || !createExplosionDescriptor()) {
+     || !createExplosionDescriptor()
+     || !createOverlayDescriptor()) {
         return false;
     }
     return true;
@@ -3381,6 +3483,96 @@ void VulkanApp::copyBufferToImage(VkBuffer buffer, VkImage image,
     endSingleTimeCommands(commandBuffer);
 }
 
+bool VulkanApp::loadFont(struct Texture *texture, stb_fontchar *fontData)
+{
+    unsigned char font[STB_FONT_HEIGHT][STB_FONT_WIDTH];
+    STB_FONT_NAME(fontData, font, STB_FONT_HEIGHT);
+    VkDeviceSize imageSize = sizeof(font);
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    createBuffer(&stagingBuffer, &stagingBufferMemory,
+                 imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                 false);
+
+    void* data;
+    vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
+    memcpy(data, font, static_cast<size_t>(imageSize));
+    vkUnmapMemory(device, stagingBufferMemory);
+    texture->width = STB_FONT_WIDTH;
+    texture->height = STB_FONT_HEIGHT;
+
+    VkImageCreateInfo imageInfo = {};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.extent.width = texture->width;
+    imageInfo.extent.height = texture->height;
+    imageInfo.extent.depth = 1; // required for 2D image
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.format = VK_FORMAT_R8_UNORM;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                      VK_IMAGE_USAGE_SAMPLED_BIT;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    // sampling is just for images used as attachment
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkResult vkRet;
+    vkRet = vkCreateImage(device, &imageInfo, nullptr, &texture->image);
+    if (vkRet != VK_SUCCESS) {
+        printf("vkCreateImage failed with %d\n", vkRet);
+        return false;
+    }
+    VkMemoryRequirements memRequirements;
+    vkGetImageMemoryRequirements(device, texture->image, &memRequirements);
+
+    VkMemoryAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = findMemoryType(memRequirements,
+                                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+    vkRet = vkAllocateMemory(device, &allocInfo, nullptr,
+                             &texture->memory);
+    if (vkRet != VK_SUCCESS) {
+        printf("vkAllocateMemory failed with %d\n", vkRet);
+        return false;
+    }
+    vkBindImageMemory(device, texture->image, texture->memory, 0);
+
+    transitionImageLayout(texture->image, VK_FORMAT_R8_UNORM,
+                          VK_IMAGE_LAYOUT_UNDEFINED,
+                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    copyBufferToImage(stagingBuffer, texture->image, texture->width,
+                      texture->height);
+    transitionImageLayout(texture->image, VK_FORMAT_R8_UNORM,
+                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    vkDestroyBuffer(device, stagingBuffer, nullptr);
+    vkFreeMemory(device, stagingBufferMemory, nullptr);
+
+    VkImageViewCreateInfo viewInfo = {};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = texture->image;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = VK_FORMAT_R8_UNORM;
+    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = 1;
+
+    vkRet = vkCreateImageView(device, &viewInfo, nullptr, &texture->view);
+    if (vkRet != VK_SUCCESS) {
+        printf("vkCreateImageView failed with %d\n", vkRet);
+        return false;
+    }
+
+    return true;
+}
 
 bool VulkanApp::createTexture(struct Texture *texture,
                               const char *filename)
@@ -3498,7 +3690,9 @@ bool VulkanApp::createTextures() {
                        "assets/asteroid_v3.png")
      || !createTexture(&sprites.textures[asteroidStart + 3],
                        "assets/asteroid_v4.png")
-     || !createTexture(&explosions.atlas, "assets/explosion_atlas.png")) {
+     || !createTexture(&explosions.atlas, "assets/explosion_atlas.png")
+     || !loadFont(&overlay.font, overlay.fontData)
+     || !createTexture(&overlay.health, "assets/health_bar.png")) {
         return false;
     }
 
@@ -3532,6 +3726,19 @@ bool VulkanApp::createTextures() {
         return false;
     }
     vkRet = vkCreateSampler(device, &samplerInfo, nullptr, &explosions.sampler);
+    if (vkRet != VK_SUCCESS) {
+        printf("vkCreateSampler failed with %d\n", vkRet);
+        return false;
+    }
+    vkRet = vkCreateSampler(device, &samplerInfo, nullptr,
+                            &overlay.healthSampler);
+    if (vkRet != VK_SUCCESS) {
+        printf("vkCreateSampler failed with %d\n", vkRet);
+        return false;
+    }
+    //samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+    vkRet = vkCreateSampler(device, &samplerInfo, nullptr,
+                            &overlay.fontSampler);
     if (vkRet != VK_SUCCESS) {
         printf("vkCreateSampler failed with %d\n", vkRet);
         return false;
