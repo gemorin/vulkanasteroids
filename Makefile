@@ -23,7 +23,7 @@ INCS=-I$(GLFWDIR)/include/GLFW -I$(VULKANINCPATH)
 CXXFLAGS=-Wall -W -g $(INCS) -std=c++14 -O2 -fno-exceptions $(MACROS)
 LDFLAGS=-g -L$(GLFWDIR)/src -L $(VULKANLIBPATH) -framework Cocoa -framework Metal -framework IOSurface -rpath $(VULKANLIBPATH) -lglfw -lvulkan
 
-all: vulkanasteroids fragment_background.spv vertex_background.spv vertex_ship.spv fragment_ship.spv vertex_explosions.spv fragment_explosions.spv vertex_overlay.spv fragment_overlay.spv
+all: vulkanasteroids fragment_background.spv vertex_background.spv vertex_ship.spv fragment_ship.spv vertex_explosions.spv fragment_explosions.spv vertex_overlay.spv fragment_overlay.spv vertex_hud.spv fragment_hud.spv
 vulkanasteroids: vulkanasteroids.o mymath.o stb_image.o
 
 stb_image.o: stb_image.h stb_image.cpp
@@ -52,6 +52,12 @@ fragment_overlay.spv: fragment_overlay.glsl
 	$(SHADERCOMPILER) -fshader-stage=fragment -o $@ $<
 
 vertex_overlay.spv: vertex_overlay.glsl
+	$(SHADERCOMPILER) -fshader-stage=vertex -o $@ $<
+
+fragment_hud.spv: fragment_hud.glsl
+	$(SHADERCOMPILER) -fshader-stage=fragment -o $@ $<
+
+vertex_hud.spv: vertex_hud.glsl
 	$(SHADERCOMPILER) -fshader-stage=vertex -o $@ $<
 
 clean:
