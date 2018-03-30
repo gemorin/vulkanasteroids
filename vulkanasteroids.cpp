@@ -1025,7 +1025,7 @@ bool VulkanApp::initGlFw() {
     // This prevents glfw from creating a gl context
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-    window = glfwCreateWindow(800, 600, "Vulkasteroids", nullptr, nullptr);
+    window = glfwCreateWindow(800, 600, "VulkanAsteroids", nullptr, nullptr);
     glfwSetWindowUserPointer(window, this);
     glfwSetWindowSizeCallback(window, &VulkanApp::glfw_onResize);
     // glfwSetKeyCallback(window, &VulkanApp::glfw_onKey);
@@ -2637,43 +2637,45 @@ bool VulkanApp::createOverlayVertex()
     const float pixelWidth = 2.0f / float(devInfo.extent.width);
     const float pixelHeight = 2.0f / float(devInfo.extent.height);
 
-    float x = -0.2f;
-    float y = -0.8f;
+    float totalWidth = 0.0f;
+    float maxY = 0.0;
+    string s = "VulkanAsteroids";
+    for (char c : s) {
+        auto *data = &textOverlay.fontData[c - STB_FIRST_CHAR];
+        totalWidth += data->advance * pixelWidth;
+        maxY = max(maxY, (float) data->y1 * pixelHeight);
+    }
+
+    // center
+    float x = totalWidth / -2.0f;
+    float y = -1.0f + maxY;
     constexpr MyPoint red(1.0f, 0.0f, 0.0f);
-    for (char c : "hello") {
-        if (!c)
-            break;
+    for (char c : s) {
         auto *data = &textOverlay.fontData[c - STB_FIRST_CHAR];
         MyPoint pos;
         pos.x = x + (float) data->x0 * pixelWidth;
         pos.y = y + (float) data->y0 * pixelHeight,
         textOverlay.vertex.vertices.emplace_back(pos, red, data->s0, data->t0);
-        pos.print("v1 ");
 
         pos.x = x + (float) data->x1 * pixelWidth;
         pos.y = y + (float) data->y0 * pixelHeight,
         textOverlay.vertex.vertices.emplace_back(pos, red, data->s1, data->t0);
-        pos.print("v2 ");
 
         pos.x = x + (float) data->x1 * pixelWidth;
         pos.y = y + (float) data->y1 * pixelHeight,
         textOverlay.vertex.vertices.emplace_back(pos, red, data->s1, data->t1);
-        pos.print("v3 ");
 
         pos.x = x + (float) data->x0 * pixelWidth;
         pos.y = y + (float) data->y0 * pixelHeight,
         textOverlay.vertex.vertices.emplace_back(pos, red, data->s0, data->t0);
-        pos.print("v4 ");
 
         pos.x = x + (float) data->x1 * pixelWidth;
         pos.y = y + (float) data->y1 * pixelHeight,
         textOverlay.vertex.vertices.emplace_back(pos, red, data->s1, data->t1);
-        pos.print("v5 ");
 
         pos.x = x + (float) data->x0 * pixelWidth;
         pos.y = y + (float) data->y1 * pixelHeight,
         textOverlay.vertex.vertices.emplace_back(pos, red, data->s0, data->t1);
-        pos.print("v6 ");
 
         x += data->advance * pixelWidth;
     }
