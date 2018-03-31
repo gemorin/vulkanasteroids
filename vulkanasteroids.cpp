@@ -418,7 +418,7 @@ class VulkanApp
             || format == VK_FORMAT_D24_UNORM_S8_UINT;
     }
 
-    void spawnNewAsteroid();
+    void spawnNewAsteroid(double currentTime);
     static MyAABB2 getSphereAABB(float *, MyPoint position);
     void resolveAsteroidCollisions(AsteroidState& a, AsteroidState& b);
     void checkForBulletHit();
@@ -772,7 +772,7 @@ void VulkanApp::AsteroidState::update(double currentTime,
 
         MyQuaternion newRot;
         newRot.rotateZ(angularVelocity);
-        rotEnd = newRot * rotEnd;
+        rotEnd = newRot * rotStart;
         rotEnd.normalize();
 
         // We may be slightly past the end of the previous one so make sure
@@ -3433,7 +3433,7 @@ bool VulkanApp::resetCommandBuffer(uint32_t i, double currentTime)
     return true;
 }
 
-void VulkanApp::spawnNewAsteroid()
+void VulkanApp::spawnNewAsteroid(double currentTime)
 {
     const float halfXSize = asteroidSize[0] / 2.0f;
     static uniform_real_distribution<float> disX(getMinX() + halfXSize,
@@ -3490,6 +3490,7 @@ void VulkanApp::spawnNewAsteroid()
         newAsteroid.radius = asteroidSize[1] / 2.0f * 0.98f;
 
         newAsteroid.generateTensor();
+        newAsteroid.rotStartTime = currentTime;
 
         asteroidStates.push_back(newAsteroid);
         puts("spawned");
@@ -3529,12 +3530,12 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime,
         if (currentTime > (lastSpawnRandCheck + 1.0)) {
             lastSpawnRandCheck = currentTime;
             if (asteroidStates.empty() || asteroidSpawnRand(randomGen) == 1)
-                spawnNewAsteroid();
+                spawnNewAsteroid(currentTime);
         }
     }
 #else
     if (asteroidStates.size() < 2) {
-        spawnNewAsteroid();
+        spawnNewAsteroid(currentTime);
     }
 #endif
     if (bulletState.live) {
