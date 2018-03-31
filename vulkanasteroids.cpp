@@ -219,6 +219,7 @@ class VulkanApp
 
         float mass = 5.0f;
         uint32_t textureIndex;
+        uint8_t sizeType = 0;
 
         AsteroidState() = default;
 
@@ -259,7 +260,7 @@ class VulkanApp
     float bulletSize[2];
 
     vector<AsteroidState> asteroidStates;
-    float asteroidSize[2];
+    float bigAsteroidSize[2];
     uniform_int_distribution<> asteroidSpawnRand{1, 3};
     double lastSpawnRandCheck = 0.0;
 
@@ -426,8 +427,11 @@ class VulkanApp
 
     void spawnNewAsteroid(double currentTime);
     static MyAABB2 getSphereAABB(float *, MyPoint position);
-    void resolveAsteroidCollisions(AsteroidState& a, AsteroidState& b);
+    void resolveAsteroidCollisions(AsteroidState& a, AsteroidState& b,
+                                   bool goBackInTime);
     void checkForBulletHit();
+    void getAsteroidSize(float *sz, const AsteroidState &a);
+    void onBulletHit(AsteroidState &a, uint32_t aIdx);
     void checkForAsteroidHit(double currentTime);
     void processCollisions(AsteroidState& a, AsteroidState& b);
     double getDeltaVelocity(const AsteroidState& a,
@@ -479,7 +483,8 @@ class VulkanApp
                                          const char* msg, void* userData);
 };
 
-void VulkanApp::resolveAsteroidCollisions(AsteroidState& a, AsteroidState& b)
+void VulkanApp::resolveAsteroidCollisions(AsteroidState& a, AsteroidState& b,
+                                          bool goBackInTime)
 {
     // XXX this does not handle when we wrapped around the screen
     MyPoint segment = b.position - a.position;
@@ -515,13 +520,30 @@ void VulkanApp::resolveAsteroidCollisions(AsteroidState& a, AsteroidState& b)
 
     const float s1 = (-quadB + sqrtDelta) / (2.0f * quadA);
     const float s2 = (-quadB - sqrtDelta) / (2.0f * quadA);
-    const float s = s1 > s2 ? s1 : s2;
     //printf("s1 %f s2 %f\n", s1, s2);
+    float s;
+    if (goBackInTime) {
+        s = s1 > s2 ? s1 : s2;
+    }
+    else {
+        s = s1 > s2 ? s2 : s1;
+    }
 
     a.position += (a.velocity) * -s;
     b.position += (b.velocity) * -s;
     a.position.print("adj a pos ");
     b.position.print("adj b pos ");
+}
+
+void VulkanApp::getAsteroidSize(float *sz, const AsteroidState &a)
+{
+    sz[0] = bigAsteroidSize[0];
+    sz[1] = bigAsteroidSize[1];
+
+    for (uint8_t i = 0; i < a.sizeType; ++i) {
+        sz[0] /= 2.0f;
+        sz[1] /= 2.0f;
+    }
 }
 
 void VulkanApp::checkForBulletHit()
@@ -545,16 +567,42 @@ void VulkanApp::checkForBulletHit()
         bullet.max.y = max(bullet.max.y, vertices[i].y);
     }
     for (uint32_t i = 0; i < asteroidStates.size(); ++i) {
-        MyAABB2 a = getSphereAABB(asteroidSize, asteroidStates[i].position);
+        float sz[2];
+        getAsteroidSize(sz, asteroidStates[i]);
+        MyAABB2 a = getSphereAABB(sz, asteroidStates[i].position);
 
         if (bullet.overlap(a)) {
-            explosions.actives.emplace_back(asteroidStates[i].position, 0.0);
-            // smaller asteroids XXX
-            asteroidStates.erase(asteroidStates.begin() + i);
+            onBulletHit(asteroidStates[i], i);
             bulletState.live = false;
             break;
         }
     }
+}
+
+void VulkanApp::onBulletHit(AsteroidState &a, uint32_t aIdx)
+{
+    // Generate an explosion
+    explosions.actives.emplace_back(a.position, 0.0);
+
+    // Now either we split it on we get rid of it entirely
+    if (a.sizeType == 2) {
+        // Get rid of it
+        asteroidStates.erase(asteroidStates.begin() + aIdx);
+        return;
+    }
+
+    // Create 2 smaller asteroids
+    ++a.sizeType;
+    a.radius /= 2.0f;
+    a.mass /= 2.0f;
+    a.velocity = a.velocity.cross(MyPoint(0.0f,0.0f,1.0f));
+    a.generateTensor();
+
+    asteroidStates.emplace_back(a);
+    asteroidStates.back().velocity *= -1.0f;
+
+    // Adjust their positions
+    resolveAsteroidCollisions(a, asteroidStates.back(), false);
 }
 
 void VulkanApp::checkForAsteroidHit(double currentTime)
@@ -578,7 +626,9 @@ void VulkanApp::checkForAsteroidHit(double currentTime)
         ship.max.y = max(ship.max.y, vertices[i].y);
     }
     for (uint32_t i = 0; i < asteroidStates.size(); ++i) {
-        MyAABB2 a = getSphereAABB(asteroidSize, asteroidStates[i].position);
+        float sz[2];
+        getAsteroidSize(sz, asteroidStates[i]);
+        MyAABB2 a = getSphereAABB(sz, asteroidStates[i].position);
 
         if (ship.overlap(a)) {
             shipState.inHitAnim = true;
@@ -2622,9 +2672,10 @@ bool VulkanApp::createVertexBuffers()
         *(v++) = {MyPoint{ x,  y, z}, red, 1.0f, 0.0f};
         *(v++) = {MyPoint{-x,  y, z}, red, 0.0f, 0.0f};
         if (i == 0) {
-            asteroidSize[0] = 2 * x;
-            asteroidSize[1] = 2 * y;
-            printf("asteroid size %f %f\n", asteroidSize[0], asteroidSize[1]);
+            bigAsteroidSize[0] = 2 * x;
+            bigAsteroidSize[1] = 2 * y;
+            printf("asteroid size %f %f\n", bigAsteroidSize[0],
+                    bigAsteroidSize[1]);
         }
         spriteScale /= 2.0;
     }
@@ -2644,7 +2695,7 @@ bool VulkanApp::createVertexBuffers()
     constexpr uint32_t rowSize = sqrt(numParticles);
     explosions.vertex.vertices.resize(numParticles*6);
     v = &explosions.vertex.vertices.front();
-    float radius = asteroidSize[0] / 4;
+    float radius = bigAsteroidSize[0] / 4;
     for (int i = 0; i < numParticles; ++i) {
         const float particleSz = radius / numParticles / 2;
 
@@ -2665,8 +2716,8 @@ bool VulkanApp::createVertexBuffers()
         *(v++) = {MyPoint{left,     top, z}, red, 0.0f, 0.0f};
     }
 #else
-    float partRadius = asteroidSize[0] / 2;
-    float partSize = asteroidSize[0] / 2;
+    float partRadius = bigAsteroidSize[0] / 2;
+    float partSize = bigAsteroidSize[0] / 2;
     uniform_real_distribution<float> coordGen(-partRadius,
                                               partRadius - partSize);
     explosions.vertex.vertices.resize(numParticles*6);
@@ -3348,19 +3399,37 @@ bool VulkanApp::resetCommandBuffer(uint32_t i, double currentTime)
     if (!asteroidStates.empty()) {
         uint32_t texIndices[asteroidStates.size()];
         MyMatrix transforms[asteroidStates.size()];
-        for (uint32_t i = 0 ; i < asteroidStates.size(); ++i) {
-            transforms[i] = asteroidStates[i].getTransform();
-            texIndices[i] = asteroidStates[i].textureIndex;
-        }
+        for (uint32_t sz = 0; sz < 3; ++sz) {
+            uint32_t numToDraw = 0;
+            for (uint32_t i = 0 ; i < asteroidStates.size(); ++i) {
+                if (asteroidStates[i].sizeType != sz) {
+                    continue;
+                }
+                transforms[numToDraw] = asteroidStates[i].getTransform();
+                texIndices[numToDraw] = asteroidStates[i].textureIndex;
+                ++numToDraw;
+            }
+            if (numToDraw == 0) {
+                continue;
+            }
 
-        vkCmdPushConstants(b, shipPipelineLayout,
-                           VK_SHADER_STAGE_VERTEX_BIT, 0,
-                           sizeof(transforms), transforms);
-        vkCmdPushConstants(b, shipPipelineLayout,
-                           VK_SHADER_STAGE_FRAGMENT_BIT,
-                           vertexPushConstantsSize,
-                           sizeof(texIndices), texIndices);
-        vkCmdDraw(b, 6, asteroidStates.size(), asteroidVertexIndexBig * 6, 0);
+            const uint32_t maxDraw = NUM_MAX_ASTEROIDS;
+            const uint32_t numDrawCalls = numToDraw / maxDraw + 1;
+            for (uint32_t it = 0; it < numDrawCalls; ++it) {
+                vkCmdPushConstants(b, shipPipelineLayout,
+                                   VK_SHADER_STAGE_VERTEX_BIT, 0,
+                                   sizeof(*transforms) * maxDraw,
+                                   transforms + it * maxDraw);
+                vkCmdPushConstants(b, shipPipelineLayout,
+                                   VK_SHADER_STAGE_FRAGMENT_BIT,
+                                   vertexPushConstantsSize,
+                                   sizeof(*texIndices) * maxDraw,
+                                   texIndices + it * maxDraw);
+                vkCmdDraw(b, 6, min(maxDraw, numToDraw),
+                          (asteroidVertexIndexBig + sz) * 6, 0);
+                numToDraw -= maxDraw;
+            }
+        }
     }
 
     // Bullet
@@ -3445,17 +3514,17 @@ bool VulkanApp::resetCommandBuffer(uint32_t i, double currentTime)
 
 void VulkanApp::spawnNewAsteroid(double currentTime)
 {
-    const float halfXSize = asteroidSize[0] / 2.0f;
+    const float halfXSize = bigAsteroidSize[0] / 2.0f;
     static uniform_real_distribution<float> disX(getMinX() + halfXSize,
                                                  -getMinX() + halfXSize);
     while (1) {
         AsteroidState newAsteroid;
 #ifndef TEST_COLLISIONS
         newAsteroid.position = {disX(randomGen),
-                                -getMinY() - asteroidSize[1] / 2.0f,
+                                -getMinY() - bigAsteroidSize[1] / 2.0f,
                                 0.0f};
 
-        MyAABB2 newAsteroidAABB = getSphereAABB(asteroidSize, newAsteroid.position);
+        MyAABB2 newAsteroidAABB = getSphereAABB(bigAsteroidSize, newAsteroid.position);
 
         // XXX check overlap with other asteroids
         if (newAsteroidAABB.overlap(getSphereAABB(shipSize,
@@ -3478,13 +3547,13 @@ void VulkanApp::spawnNewAsteroid(double currentTime)
         float v = 8e-2f;
         if (asteroidStates.empty()) {
             newAsteroid.position = { getMinX() + halfXSize,
-                                     -getMinY() - asteroidSize[1] / 2.0f,
+                                     -getMinY() - bigAsteroidSize[1] / 2.0f,
                                      0.0f };
             newAsteroid.velocity = { v, -v, 0.0f };
         }
         else {
             newAsteroid.position = { -getMinX() - halfXSize,
-                                     -getMinY() - asteroidSize[1] / 2.0f,
+                                     -getMinY() - bigAsteroidSize[1] / 2.0f,
                                      0.0f };
             newAsteroid.velocity = { -v, -v, 0.0f };
         }
@@ -3497,7 +3566,7 @@ void VulkanApp::spawnNewAsteroid(double currentTime)
 
         // radius of the collision sphere is the size of the y axis
         // this is completely based on the assset we're using
-        newAsteroid.radius = asteroidSize[1] / 2.0f * 0.98f;
+        newAsteroid.radius = bigAsteroidSize[1] / 2.0f * 0.98f;
 
         newAsteroid.generateTensor();
         newAsteroid.rotStartTime = currentTime;
@@ -3578,7 +3647,8 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime,
 
     for (uint32_t i = 0; i < asteroidStates.size(); ++i) {
         for (uint32_t j = (i+1) ; j < asteroidStates.size(); ++j) {
-            resolveAsteroidCollisions(asteroidStates[i], asteroidStates[j]);
+            resolveAsteroidCollisions(asteroidStates[i], asteroidStates[j],
+                                      true);
         }
     }
     if (bulletState.live && !asteroidStates.empty()) {
