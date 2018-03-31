@@ -165,6 +165,12 @@ class VulkanApp
     Descriptor shipDescriptor;
     VkShaderModule spriteVertexShader;
     VkShaderModule shipFragmentShader;
+    static constexpr uint32_t shipVertexIndex = 0;
+    static constexpr uint32_t shipEngineVertexIndex = 1;
+    static constexpr uint32_t shipBulletVertexIndex = 2;
+    static constexpr uint32_t asteroidVertexIndexBig = 3;
+    static constexpr uint32_t asteroidVertexIndexMiddle = 4;
+    static constexpr uint32_t asteroidVertexIndexSmall = 5;
     VertexBuffer spriteVertex;
     VkPipeline shipPipeline;
     VkPipelineLayout shipPipelineLayout;
@@ -554,7 +560,7 @@ void VulkanApp::checkForBulletHit()
 void VulkanApp::checkForAsteroidHit(double currentTime)
 {
     MyPoint vertices[6];
-    const uint32_t startIdx = 6 * sprites.shipTextureIndex;
+    const uint32_t startIdx = 6 * shipVertexIndex;
     for (uint32_t i = 0; i < 6; ++i) {
         const Vertex v = spriteVertex.vertices[startIdx + i];
         vertices[i] = v.pos.transform(shipState.orientation);
@@ -2541,12 +2547,12 @@ bool VulkanApp::createVertexBuffers()
     const float yscale = -2.0f * getMinY() / float(devInfo.extent.height);
 
     // Assuming all sprites are 2 triangles
-    spriteVertex.vertices.resize(6 * (sprites.asteroidTextureEndIndex + 1));
+    spriteVertex.vertices.resize(6 * (asteroidVertexIndexSmall + 1));
 
     // ship
     float spriteScale = 0.8f;
     const Texture *t = &sprites.textures[sprites.shipTextureIndex];
-    v = &spriteVertex.vertices[6 * sprites.shipTextureIndex];
+    v = &spriteVertex.vertices[6 * shipVertexIndex];
 
     float x = float(t->width) * xscale / 2.0f * spriteScale;
     float y = yscale * float(t->height) / 2.0f * spriteScale;
@@ -2562,7 +2568,7 @@ bool VulkanApp::createVertexBuffers()
 
     // engine effect
     t = &sprites.textures[sprites.shipEngineTextureIndex];
-    v = &spriteVertex.vertices[6 * sprites.shipEngineTextureIndex];
+    v = &spriteVertex.vertices[6 * shipEngineVertexIndex];
     spriteScale = 1.0f;
     x = xscale * float(t->width) / 2.0f * spriteScale;
     float ysize = yscale * float(t->height) * spriteScale;
@@ -2584,7 +2590,7 @@ bool VulkanApp::createVertexBuffers()
 
     // bullet
     t = &sprites.textures[sprites.shipBulletTextureIndex];
-    v = &spriteVertex.vertices[6 * sprites.shipBulletTextureIndex];
+    v = &spriteVertex.vertices[6 * shipBulletVertexIndex];
     spriteScale = 1.0f;
     x = float(t->width) * xscale / 2.0f * spriteScale;
     y = yscale * float(t->height) / 2.0f * spriteScale;
@@ -2604,19 +2610,24 @@ bool VulkanApp::createVertexBuffers()
     // the same vertices
     spriteScale = 0.25f;
     t = &sprites.textures[sprites.asteroidTextureStartIndex];
-    v = &spriteVertex.vertices[6 * sprites.asteroidTextureStartIndex];
-    x = float(t->width) * xscale / 2.0f * spriteScale;
-    y = yscale * float(t->height) / 2.0f * spriteScale;
-    *(v++) = {MyPoint{-x, -y, z}, red, 0.0f, 1.0f};
-    *(v++) = {MyPoint{ x, -y, z}, red, 1.0f, 1.0f};
-    *(v++) = {MyPoint{ x,  y, z}, red, 1.0f, 0.0f};
-    // 2nd
-    *(v++) = {MyPoint{-x, -y, z}, red, 0.0f, 1.0f};
-    *(v++) = {MyPoint{ x,  y, z}, red, 1.0f, 0.0f};
-    *(v++) = {MyPoint{-x,  y, z}, red, 0.0f, 0.0f};
-    asteroidSize[0] = 2 * x;
-    asteroidSize[1] = 2 * y;
-    printf("asteroid size %f %f\n", asteroidSize[0], asteroidSize[1]);
+    v = &spriteVertex.vertices[6 * asteroidVertexIndexBig];
+    for (int i = 0; i < 3; ++i) {
+        x = float(t->width) * xscale / 2.0f * spriteScale;
+        y = yscale * float(t->height) / 2.0f * spriteScale;
+        *(v++) = {MyPoint{-x, -y, z}, red, 0.0f, 1.0f};
+        *(v++) = {MyPoint{ x, -y, z}, red, 1.0f, 1.0f};
+        *(v++) = {MyPoint{ x,  y, z}, red, 1.0f, 0.0f};
+        // 2nd
+        *(v++) = {MyPoint{-x, -y, z}, red, 0.0f, 1.0f};
+        *(v++) = {MyPoint{ x,  y, z}, red, 1.0f, 0.0f};
+        *(v++) = {MyPoint{-x,  y, z}, red, 0.0f, 0.0f};
+        if (i == 0) {
+            asteroidSize[0] = 2 * x;
+            asteroidSize[1] = 2 * y;
+            printf("asteroid size %f %f\n", asteroidSize[0], asteroidSize[1]);
+        }
+        spriteScale /= 2.0;
+    }
 
     numBytes = spriteVertex.vertices.size() *
                sizeof(spriteVertex.vertices.front());
@@ -3318,7 +3329,7 @@ bool VulkanApp::resetCommandBuffer(uint32_t i, double currentTime)
                             shipPipelineLayout, 0, 1,
                             &shipDescriptor.set, 0, nullptr);
 
-    vkCmdDraw(b, 6, 1, sprites.shipTextureIndex * 6, 0);
+    vkCmdDraw(b, 6, 1, shipVertexIndex * 6, 0);
     float zero = 0.0f;
     vkCmdPushConstants(b, shipPipelineLayout,
                        VK_SHADER_STAGE_FRAGMENT_BIT,
@@ -3330,7 +3341,7 @@ bool VulkanApp::resetCommandBuffer(uint32_t i, double currentTime)
                            VK_SHADER_STAGE_FRAGMENT_BIT,
                            vertexPushConstantsSize,
                            sizeof(idx), &idx);
-        vkCmdDraw(b, 6, 1, sprites.shipEngineTextureIndex * 6, 0);
+        vkCmdDraw(b, 6, 1, shipEngineVertexIndex * 6, 0);
     }
 
     // Asteroids
@@ -3349,8 +3360,7 @@ bool VulkanApp::resetCommandBuffer(uint32_t i, double currentTime)
                            VK_SHADER_STAGE_FRAGMENT_BIT,
                            vertexPushConstantsSize,
                            sizeof(texIndices), texIndices);
-        vkCmdDraw(b, 6, asteroidStates.size(),
-                  sprites.asteroidTextureStartIndex * 6, 0);
+        vkCmdDraw(b, 6, asteroidStates.size(), asteroidVertexIndexBig * 6, 0);
     }
 
     // Bullet
@@ -3364,7 +3374,7 @@ bool VulkanApp::resetCommandBuffer(uint32_t i, double currentTime)
                            VK_SHADER_STAGE_FRAGMENT_BIT,
                            vertexPushConstantsSize,
                            sizeof(idx), &idx);
-        vkCmdDraw(b, 6, 1, sprites.shipBulletTextureIndex * 6, 0);
+        vkCmdDraw(b, 6, 1, shipBulletVertexIndex * 6, 0);
     }
 
     // Explosions
