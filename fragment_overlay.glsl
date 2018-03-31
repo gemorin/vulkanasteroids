@@ -9,7 +9,7 @@ layout(location = 1) in vec2 uv;
 layout(location = 0) out vec4 outColor;
 
 void main() {
+    float c = texture(font, uv).r;
+    outColor = vec4(vec3(c), c);
     //outColor = vec4(color, 1.0f);
-    float color = texture(font, uv).r;
-    outColor = vec4(vec3(color), color);
 }

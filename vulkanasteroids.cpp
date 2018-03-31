@@ -15,12 +15,17 @@
 
 #include "mymath.h"
 
+#if 0
 #include "assets/stb_font_consolas_24_latin1.inl"
 #define STB_FONT_NAME stb_font_consolas_24_latin1
 #define STB_FONT_WIDTH STB_FONT_consolas_24_latin1_BITMAP_WIDTH
 #define STB_FONT_HEIGHT STB_FONT_consolas_24_latin1_BITMAP_HEIGHT
 #define STB_FIRST_CHAR STB_FONT_consolas_24_latin1_FIRST_CHAR
 #define STB_NUM_CHARS STB_FONT_consolas_24_latin1_NUM_CHARS
+#endif
+
+#define STB_TRUETYPE_IMPLEMENTATION
+#include "stb_truetype.h"
 
 using namespace std;
 
@@ -187,7 +192,7 @@ class VulkanApp
         void initiateRotation(bool pos, double currentTime);
         void updateOrientation(double currentTime, GLFWwindow *window);
         void updatePosition(double currentTime, VulkanApp *app);
-        void update(double currentTime, VulkanApp *app);
+        void update(double currentTime, double dt, VulkanApp *app);
         const MyPoint& getPosition() const { return position; }
         MyMatrix getTransform() const;
     };
@@ -275,9 +280,11 @@ class VulkanApp
     } explosions;
 
     // textOverlay
-    struct {
+    struct Overlay {
         Texture font;
-        stb_fontchar fontData[STB_NUM_CHARS];
+        //stb_fontchar fontData[STB_NUM_CHARS];
+        static constexpr int fontFirstChar = 32;
+        stbtt_bakedchar fontData[126 - fontFirstChar];
         VkSampler fontSampler;
         VertexBuffer vertex;
         VkDescriptorSetLayout layout;
@@ -372,7 +379,11 @@ class VulkanApp
     bool createShaders(VkShaderModule *vs, VkShaderModule *fs,
                        const char *vertexPath, const char *fragPath);
     bool createTexture(struct Texture *texture, const char *filename);
-    bool loadFont(struct Texture *texture, stb_fontchar *data);
+    //bool loadFont(struct Texture *texture, stb_fontchar *data);
+    bool loadFont(struct Texture *texture,
+                  stbtt_bakedchar *fontData,
+                  int firstChar,
+                  const char *file);
 
     void cleanup();
     void cleanupSwapChain();
@@ -697,19 +708,16 @@ VulkanApp::ShipState::updateOrientation(double currentTime, GLFWwindow *window)
 }
 
 void
-VulkanApp::ShipState::updatePosition(double currentTime, VulkanApp *app)
+VulkanApp::ShipState::updatePosition(double dt, VulkanApp *app)
 {
-    static double lastAccel = 0;
-    if (//(currentTime - lastAccel) > 0.1 &&
-        velocity.length() < 0.003f &&
+    if (velocity.length() < 0.5f &&
         GLFW_PRESS == glfwGetKey(app->window, GLFW_KEY_UP)) {
-        const float acceleration = 3e-5f;
+        const float acceleration = 0.5f;
         // ship model points down
         MyPoint direction(0.0f, -1.0f, 0.0f);
-        velocity += direction.transform(orientation) * acceleration;
-        lastAccel = currentTime;
+        velocity += direction.transform(orientation) * (acceleration * dt);
     }
-    position += velocity;
+    position += velocity * dt;
     velocity *= 0.999f;
 
     if (position.x > -app->getMinX()) {
@@ -726,10 +734,10 @@ VulkanApp::ShipState::updatePosition(double currentTime, VulkanApp *app)
     }
 }
 
-void VulkanApp::ShipState::update(double currentTime, VulkanApp *app)
+void VulkanApp::ShipState::update(double currentTime, double dt, VulkanApp *app)
 {
     updateOrientation(currentTime, app->window);
-    updatePosition(currentTime, app);
+    updatePosition(dt, app);
 
     lastFrame = currentTime;
 }
@@ -2694,46 +2702,64 @@ bool VulkanApp::createOverlayVertex()
     const float pixelHeight = 2.0f / float(devInfo.extent.height);
 
     float totalWidth = 0.0f;
-    float maxY = 0.0;
-    string s = "VulkanAsteroids";
+    //float maxY = 0.0;
+    string s = "HEALTH";
     for (char c : s) {
-        auto *data = &textOverlay.fontData[c - STB_FIRST_CHAR];
-        totalWidth += data->advance * pixelWidth;
-        maxY = max(maxY, (float) data->y1 * pixelHeight);
+        auto *data = &textOverlay.fontData[c - textOverlay.fontFirstChar];
+        totalWidth += data->xadvance * pixelWidth;
+        //maxY = max(maxY, (float) data->y1 * pixelHeight);
     }
 
     // center
     float x = totalWidth / -2.0f;
-    float y = -1.0f + maxY;
+    float y = -0.95f;
+    const Texture *t = &textOverlay.font;
     constexpr MyPoint red(1.0f, 0.0f, 0.0f);
     for (char c : s) {
-        auto *data = &textOverlay.fontData[c - STB_FIRST_CHAR];
+        auto *data = &textOverlay.fontData[c - textOverlay.fontFirstChar];
+        float x0 = data->xoff;
+        float y0 = data->yoff;
+        float x1 = data->xoff + data->x1 - data->x0;
+        float y1 = data->yoff + data->y1 - data->y0;
         MyPoint pos;
-        pos.x = x + (float) data->x0 * pixelWidth;
-        pos.y = y + (float) data->y0 * pixelHeight,
-        textOverlay.vertex.vertices.emplace_back(pos, red, data->s0, data->t0);
+        float u,v;
+        pos.x = x + (float) x0 * pixelWidth;
+        pos.y = y + (float) y0 * pixelHeight;
+        u = (float) data->x0 / t->width;
+        v = (float) data->y0 / t->height;
+        textOverlay.vertex.vertices.emplace_back(pos, red, u, v);
 
-        pos.x = x + (float) data->x1 * pixelWidth;
-        pos.y = y + (float) data->y0 * pixelHeight,
-        textOverlay.vertex.vertices.emplace_back(pos, red, data->s1, data->t0);
+        pos.x = x + (float) x1 * pixelWidth;
+        pos.y = y + (float) y0 * pixelHeight;
+        u = (float) data->x1 / t->width;
+        v = (float) data->y0 / t->height;
+        textOverlay.vertex.vertices.emplace_back(pos, red, u, v);
 
-        pos.x = x + (float) data->x1 * pixelWidth;
-        pos.y = y + (float) data->y1 * pixelHeight,
-        textOverlay.vertex.vertices.emplace_back(pos, red, data->s1, data->t1);
+        pos.x = x + (float) x1 * pixelWidth;
+        pos.y = y + (float) y1 * pixelHeight;
+        u = (float) data->x1 / t->width;
+        v = (float) data->y1 / t->height;
+        textOverlay.vertex.vertices.emplace_back(pos, red, u, v);
 
-        pos.x = x + (float) data->x0 * pixelWidth;
-        pos.y = y + (float) data->y0 * pixelHeight,
-        textOverlay.vertex.vertices.emplace_back(pos, red, data->s0, data->t0);
+        pos.x = x + (float) x0 * pixelWidth;
+        pos.y = y + (float) y0 * pixelHeight;
+        u = (float) data->x0 / t->width;
+        v = (float) data->y0 / t->height;
+        textOverlay.vertex.vertices.emplace_back(pos, red, u, v);
 
-        pos.x = x + (float) data->x1 * pixelWidth;
-        pos.y = y + (float) data->y1 * pixelHeight,
-        textOverlay.vertex.vertices.emplace_back(pos, red, data->s1, data->t1);
+        pos.x = x + (float) x1 * pixelWidth;
+        pos.y = y + (float) y1 * pixelHeight;
+        u = (float) data->x1 / t->width;
+        v = (float) data->y1 / t->height;
+        textOverlay.vertex.vertices.emplace_back(pos, red, u, v);
 
-        pos.x = x + (float) data->x0 * pixelWidth;
-        pos.y = y + (float) data->y1 * pixelHeight,
-        textOverlay.vertex.vertices.emplace_back(pos, red, data->s0, data->t1);
+        pos.x = x + (float) x0 * pixelWidth;
+        pos.y = y + (float) y1 * pixelHeight;
+        u = (float) data->x0 / t->width;
+        v = (float) data->y1 / t->height;
+        textOverlay.vertex.vertices.emplace_back(pos, red, u, v);
 
-        x += data->advance * pixelWidth;
+        x += data->xadvance * pixelWidth;
     }
     uint32_t numBytes = textOverlay.vertex.vertices.size() *
                         sizeof(textOverlay.vertex.vertices.front());
@@ -2762,7 +2788,7 @@ bool VulkanApp::createHUDVertex()
     float left = float(t->width) / -2.0f * xscale * spriteScale;
     float right = -left;
     float height = yscale * float(t->height) * spriteScale;
-    float top = -0.990f;
+    float top = -0.930f;
     float bottom = top + height;
     printf("%f bot\n", bottom);
     const float z = 0.0f;
@@ -3551,7 +3577,7 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime,
         checkForAsteroidHit(currentTime);
     }
 
-    shipState.update(currentTime, this);
+    shipState.update(currentTime, dt, this);
 
     resetCommandBuffer(idx, currentTime);
 
@@ -3790,10 +3816,27 @@ void VulkanApp::copyBufferToImage(VkBuffer buffer, VkImage image,
     endSingleTimeCommands(commandBuffer);
 }
 
-bool VulkanApp::loadFont(struct Texture *texture, stb_fontchar *fontData)
+bool VulkanApp::loadFont(struct Texture *texture,
+                         //stb_fontchar *fontData)
+                         stbtt_bakedchar *fontData,
+                         int firstChar,
+                         const char *file)
 {
+#if 1
+    vector<char> ttf;
+    if (!readFile(&ttf, file)) {
+        return false;
+    }
+    unsigned char font[512 * 512];
+    int ret = stbtt_BakeFontBitmap((const unsigned char*)ttf.data(),0, 24.0, font, 512, 512, firstChar,
+                         126-firstChar, fontData);
+    printf("stbtt_BakeFontBitmap returned %d\n", ret);
+#else
+
+
     unsigned char font[STB_FONT_HEIGHT][STB_FONT_WIDTH];
     STB_FONT_NAME(fontData, font, STB_FONT_HEIGHT);
+#endif
     VkDeviceSize imageSize = sizeof(font);
     VkBuffer stagingBuffer;
     VkDeviceMemory stagingBufferMemory;
@@ -3807,8 +3850,8 @@ bool VulkanApp::loadFont(struct Texture *texture, stb_fontchar *fontData)
     vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
     memcpy(data, font, static_cast<size_t>(imageSize));
     vkUnmapMemory(device, stagingBufferMemory);
-    texture->width = STB_FONT_WIDTH;
-    texture->height = STB_FONT_HEIGHT;
+    texture->width = 512; //STB_FONT_WIDTH;
+    texture->height = 512; //STB_FONT_HEIGHT;
 
     VkImageCreateInfo imageInfo = {};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -3998,7 +4041,8 @@ bool VulkanApp::createTextures() {
      || !createTexture(&sprites.textures[asteroidStart + 3],
                        "assets/asteroid_v4.png")
      || !createTexture(&explosions.atlas, "assets/explosion_atlas.png")
-     || !loadFont(&textOverlay.font, textOverlay.fontData)
+     || !loadFont(&textOverlay.font, textOverlay.fontData,
+                  textOverlay.fontFirstChar, "assets/kenvector_future.ttf")
      || !createTexture(&hud.health, "assets/health_bar.png")) {
         return false;
     }
