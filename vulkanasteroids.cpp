@@ -783,17 +783,17 @@ void VulkanApp::AsteroidState::update(double currentTime,
 
     position += (velocity * dt);
 
-    if (position.x > -app->getMinX()) {
-        position.x = app->getMinX();
+    if (position.x - radius > -app->getMinX()) {
+        position.x = app->getMinX() - radius;
     }
-    else if (position.x < app->getMinX()) {
-        position.x = -app->getMinX();
+    else if (position.x + radius < app->getMinX()) {
+        position.x = -app->getMinX() + radius;
     }
-    if (position.y > -app->getMinY()) {
-        position.y = app->getMinY();
+    if (position.y - radius > -app->getMinY()) {
+        position.y = app->getMinY() - radius;
     }
-    else if (position.y < app->getMinY()) {
-        position.y = -app->getMinY();
+    else if (position.y + radius < app->getMinY()) {
+        position.y = -app->getMinY() + radius;
     }
 }
 
