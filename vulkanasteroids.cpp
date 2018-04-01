@@ -263,6 +263,7 @@ class VulkanApp
     float bigAsteroidSize[2];
     uniform_int_distribution<> asteroidSpawnRand{1, 3};
     double lastSpawnRandCheck = 0.0;
+    uint32_t score = 0;
 
     struct Explosions {
         Texture atlas;
@@ -294,6 +295,8 @@ class VulkanApp
         stbtt_bakedchar fontData[126 - fontFirstChar];
         VkSampler fontSampler;
         VertexBuffer vertex;
+        void *vertexData;
+        size_t scoreStartIdx;
         VkDescriptorSetLayout layout;
         Descriptor desc;
 
@@ -439,6 +442,7 @@ class VulkanApp
     double getDeltaVelocity(const AsteroidState& a,
                             const MyPoint& relativeContactPos,
                             const MyPoint& normal);
+    void changeScore(uint32_t);
 
     bool renderFrame(uint32_t renderCount, double currentTime,
                      double dt);
@@ -572,6 +576,7 @@ void VulkanApp::checkForBulletHit()
         MyAABB2 a = getSphereAABB(sz, asteroidStates[i].position);
 
         if (bullet.overlap(a)) {
+            changeScore(5 * (1 + asteroidStates[i].sizeType));
             onBulletHit(asteroidStates[i], i);
             bulletState.live = false;
             break;
@@ -2814,6 +2819,23 @@ void VulkanApp::createOverlayVertices(vector<Vertex>& vertices,
     }
 }
 
+void VulkanApp::changeScore(uint32_t add)
+{
+    score += add;
+    char buf[32];
+    sprintf(buf, "Score %6u", score);
+    textOverlay.vertex.vertices.erase(
+            textOverlay.vertex.vertices.begin() + textOverlay.scoreStartIdx,
+            textOverlay.vertex.vertices.end());
+    createOverlayVertices(textOverlay.vertex.vertices, -0.95f, -0.95f, buf);
+    uint32_t numBytes = (textOverlay.vertex.vertices.size () -
+                         textOverlay.scoreStartIdx) * sizeof(Vertex);
+    char *dest = (char *) textOverlay.vertexData;
+    dest += textOverlay.scoreStartIdx * sizeof(Vertex);
+    memcpy(dest, textOverlay.vertex.vertices.data() + textOverlay.scoreStartIdx,
+           numBytes);
+}
+
 bool VulkanApp::createOverlayVertex()
 {
     const float pixelWidth = 2.0f / float(devInfo.extent.width);
@@ -2828,12 +2850,14 @@ bool VulkanApp::createOverlayVertex()
     float x = totalWidth / -2.0f;
     float y = -0.95f;
     createOverlayVertices(textOverlay.vertex.vertices, x, y, s);
+    textOverlay.scoreStartIdx = textOverlay.vertex.vertices.size();
 
     // Health
-    s = "Score  00000";
+    char buf[32];
+    sprintf(buf, "Score %6u", score);
     x = -0.95f;
     y = -0.95f;
-    createOverlayVertices(textOverlay.vertex.vertices, x, y, s);
+    createOverlayVertices(textOverlay.vertex.vertices, x, y, buf);
 
     uint32_t numBytes = textOverlay.vertex.vertices.size() *
                         sizeof(textOverlay.vertex.vertices.front());
@@ -2845,10 +2869,12 @@ bool VulkanApp::createOverlayVertex()
                       numBytes, vertexUsage, memFlags, false)) {
         return false;
     }
-    void *data;
-    vkMapMemory(device, textOverlay.vertex.memory, 0, numBytes, 0, &data);
-    memcpy(data, textOverlay.vertex.vertices.data(), numBytes);
-    vkUnmapMemory(device, textOverlay.vertex.memory);
+    vkMapMemory(device, textOverlay.vertex.memory, 0, numBytes, 0,
+                &textOverlay.vertexData);
+    memcpy(textOverlay.vertexData, textOverlay.vertex.vertices.data(),
+           numBytes);
+
+    // Unlike other vertices, we do not unmap it so we can update it
 
     return true;
 }
