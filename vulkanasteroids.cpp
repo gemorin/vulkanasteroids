@@ -244,7 +244,7 @@ class VulkanApp
         // Move sizes in our coord here XXX FIXME
 
         SpriteTextures() { textures.resize(asteroidTextureEndIndex + 1); }
-        static_assert((asteroidTextureEndIndex + 1) == TEXTURE_ARRAY_SIZE,
+        static_assert((asteroidTextureEndIndex + 1) == SPRITE_TEXTURE_ARRAY_SIZE,
                       "texture array is not sized properly");
     } sprites;
 
@@ -373,6 +373,8 @@ class VulkanApp
     bool resetCommandBuffer(uint32_t i, double currentTime);
     bool createVertexBuffers();
     bool createOverlayVertex();
+    void createOverlayVertices(vector<Vertex>& vertices, float x, float y,
+                               const string& s);
     bool createHUDVertex();
     bool createUniformBuffers();
     bool createDescriptors();
@@ -2756,23 +2758,12 @@ bool VulkanApp::createVertexBuffers()
     return true;
 }
 
-bool VulkanApp::createOverlayVertex()
+void VulkanApp::createOverlayVertices(vector<Vertex>& vertices,
+                                      float x, float y,
+                                      const string& s)
 {
     const float pixelWidth = 2.0f / float(devInfo.extent.width);
     const float pixelHeight = 2.0f / float(devInfo.extent.height);
-
-    float totalWidth = 0.0f;
-    //float maxY = 0.0;
-    string s = "HEALTH";
-    for (char c : s) {
-        auto *data = &textOverlay.fontData[c - textOverlay.fontFirstChar];
-        totalWidth += data->xadvance * pixelWidth;
-        //maxY = max(maxY, (float) data->y1 * pixelHeight);
-    }
-
-    // center
-    float x = totalWidth / -2.0f;
-    float y = -0.95f;
     const Texture *t = &textOverlay.font;
     constexpr MyPoint red(1.0f, 0.0f, 0.0f);
     for (char c : s) {
@@ -2787,40 +2778,63 @@ bool VulkanApp::createOverlayVertex()
         pos.y = y + (float) y0 * pixelHeight;
         u = (float) data->x0 / t->width;
         v = (float) data->y0 / t->height;
-        textOverlay.vertex.vertices.emplace_back(pos, red, u, v);
+        vertices.emplace_back(pos, red, u, v);
 
         pos.x = x + (float) x1 * pixelWidth;
         pos.y = y + (float) y0 * pixelHeight;
         u = (float) data->x1 / t->width;
         v = (float) data->y0 / t->height;
-        textOverlay.vertex.vertices.emplace_back(pos, red, u, v);
+        vertices.emplace_back(pos, red, u, v);
 
         pos.x = x + (float) x1 * pixelWidth;
         pos.y = y + (float) y1 * pixelHeight;
         u = (float) data->x1 / t->width;
         v = (float) data->y1 / t->height;
-        textOverlay.vertex.vertices.emplace_back(pos, red, u, v);
+        vertices.emplace_back(pos, red, u, v);
 
         pos.x = x + (float) x0 * pixelWidth;
         pos.y = y + (float) y0 * pixelHeight;
         u = (float) data->x0 / t->width;
         v = (float) data->y0 / t->height;
-        textOverlay.vertex.vertices.emplace_back(pos, red, u, v);
+        vertices.emplace_back(pos, red, u, v);
 
         pos.x = x + (float) x1 * pixelWidth;
         pos.y = y + (float) y1 * pixelHeight;
         u = (float) data->x1 / t->width;
         v = (float) data->y1 / t->height;
-        textOverlay.vertex.vertices.emplace_back(pos, red, u, v);
+        vertices.emplace_back(pos, red, u, v);
 
         pos.x = x + (float) x0 * pixelWidth;
         pos.y = y + (float) y1 * pixelHeight;
         u = (float) data->x0 / t->width;
         v = (float) data->y1 / t->height;
-        textOverlay.vertex.vertices.emplace_back(pos, red, u, v);
+        vertices.emplace_back(pos, red, u, v);
 
         x += data->xadvance * pixelWidth;
     }
+}
+
+bool VulkanApp::createOverlayVertex()
+{
+    const float pixelWidth = 2.0f / float(devInfo.extent.width);
+    float totalWidth = 0.0f;
+    // Health
+    string s = "HEALTH";
+    for (char c : s) {
+        auto *data = &textOverlay.fontData[c - textOverlay.fontFirstChar];
+        totalWidth += data->xadvance * pixelWidth;
+        //maxY = max(maxY, (float) data->y1 * pixelHeight);
+    }
+    float x = totalWidth / -2.0f;
+    float y = -0.95f;
+    createOverlayVertices(textOverlay.vertex.vertices, x, y, s);
+
+    // Health
+    s = "Score  00000";
+    x = -0.95f;
+    y = -0.95f;
+    createOverlayVertices(textOverlay.vertex.vertices, x, y, s);
+
     uint32_t numBytes = textOverlay.vertex.vertices.size() *
                         sizeof(textOverlay.vertex.vertices.front());
     const VkBufferUsageFlags vertexUsage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
