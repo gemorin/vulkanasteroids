@@ -90,7 +90,7 @@ void MyPoint::makeOrthornormalBasis(MyPoint *y,
 
 void MyPoint::print(const char *s) const
 {
-    printf("%s%.3f %.3f %.3f\n", s, x, y, z);
+    printf("%s%.5f %.5f %.5f\n", s, x, y, z);
 }
 
 MyPoint MyPoint::transform(const MyMatrix& m) const

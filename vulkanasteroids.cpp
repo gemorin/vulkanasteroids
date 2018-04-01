@@ -228,10 +228,10 @@ class VulkanApp
         MyMatrix getTransform() const;
         void update(double currentTime, double dt, const VulkanApp *app);
     };
-    constexpr static uint32_t maxNumAsteroids = NUM_MAX_ASTEROIDS;
-    constexpr static uint32_t vertexPushConstantsSize = maxNumAsteroids *
+    constexpr static uint32_t maxNumAsteroids = 10;
+    constexpr static uint32_t vertexPushConstantsSize = NUM_ASTEROIDS_PER_DRAW*
                                                         sizeof(MyMatrix);
-    constexpr static uint32_t fragTexPushConstantSize = maxNumAsteroids *
+    constexpr static uint32_t fragTexPushConstantSize = NUM_ASTEROIDS_PER_DRAW *
                                                         sizeof(int);
     struct SpriteTextures {
         static constexpr uint32_t shipTextureIndex = 0;
@@ -495,7 +495,9 @@ void VulkanApp::resolveAsteroidCollisions(AsteroidState& a, AsteroidState& b,
         // Nothing to do
         return;
     }
-    const MyPoint velDiff = a.velocity - b.velocity;
+    const MyPoint velDiff = goBackInTime
+                          ? a.velocity - b.velocity
+                          : b.velocity - a.velocity;
     const float velDiffLen = velDiff.length();
     printf("time %lf\n", glfwGetTime());
 #if 0
@@ -521,16 +523,12 @@ void VulkanApp::resolveAsteroidCollisions(AsteroidState& a, AsteroidState& b,
     const float s1 = (-quadB + sqrtDelta) / (2.0f * quadA);
     const float s2 = (-quadB - sqrtDelta) / (2.0f * quadA);
     //printf("s1 %f s2 %f\n", s1, s2);
-    float s;
-    if (goBackInTime) {
-        s = s1 > s2 ? s1 : s2;
-    }
-    else {
-        s = s1 > s2 ? s2 : s1;
-    }
+    float s = s1 > s2 ? s1 : s2;
+    if (goBackInTime)
+        s *= -1.0f;
 
-    a.position += (a.velocity) * -s;
-    b.position += (b.velocity) * -s;
+    a.position += (a.velocity) * s;
+    b.position += (b.velocity) * s;
     a.position.print("adj a pos ");
     b.position.print("adj b pos ");
 }
@@ -3413,7 +3411,7 @@ bool VulkanApp::resetCommandBuffer(uint32_t i, double currentTime)
                 continue;
             }
 
-            const uint32_t maxDraw = NUM_MAX_ASTEROIDS;
+            const uint32_t maxDraw = NUM_ASTEROIDS_PER_DRAW;
             const uint32_t numDrawCalls = numToDraw / maxDraw + 1;
             for (uint32_t it = 0; it < numDrawCalls; ++it) {
                 vkCmdPushConstants(b, shipPipelineLayout,
