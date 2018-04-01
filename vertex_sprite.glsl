@@ -17,7 +17,7 @@ layout(binding = 0) uniform UniformMvp {
     mat4 proj;
 } mvp;
 layout(push_constant) uniform PushConsts {
-	mat4 transform[NUM_MAX_ASTEROIDS];
+	mat4 transform[NUM_ASTEROIDS_PER_DRAW];
 } pushConsts;
 
 void main() {

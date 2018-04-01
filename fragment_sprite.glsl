@@ -10,7 +10,7 @@ layout(location = 2) flat in int instanceIdx;
 
 layout(location = 0) out vec4 outColor;
 layout(push_constant) uniform PushConsts {
-	layout (offset = (NUM_MAX_ASTEROIDS * 64)) int idx[NUM_MAX_ASTEROIDS];
+	layout (offset = (NUM_ASTEROIDS_PER_DRAW * 64)) int idx[NUM_ASTEROIDS_PER_DRAW];
 	float colorFix;
 } pushConsts;
 

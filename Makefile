@@ -15,15 +15,15 @@ VULKANINCPATH=$(VULKANDIR)/external/MoltenVK/Package/Release/MoltenVK/include/
 VULKANLIBPATH=$(VULKANDIR)/build/loader
 SHADERCOMPILER=/Users/guillaume/dev/vulkansdk-macos-1.0.69.0/macOS/bin/glslc
 
-NUM_MAX_ASTEROIDS=10
+NUM_ASTEROIDS_PER_DRAW=10
 TEXTURE_ARRAY_SIZE=7
-MACROS=-DNUM_MAX_ASTEROIDS=$(NUM_MAX_ASTEROIDS) -DTEXTURE_ARRAY_SIZE=$(TEXTURE_ARRAY_SIZE)
+MACROS=-DNUM_ASTEROIDS_PER_DRAW=$(NUM_ASTEROIDS_PER_DRAW) -DTEXTURE_ARRAY_SIZE=$(TEXTURE_ARRAY_SIZE)
 
 INCS=-I$(GLFWDIR)/include/GLFW -I$(VULKANINCPATH)
 CXXFLAGS=-Wall -W -g $(INCS) -std=c++14 -O2 -fno-exceptions $(MACROS)
 LDFLAGS=-g -L$(GLFWDIR)/src -L $(VULKANLIBPATH) -framework Cocoa -framework Metal -framework IOSurface -rpath $(VULKANLIBPATH) -lglfw -lvulkan
 
-all: vulkanasteroids fragment_background.spv vertex_background.spv vertex_ship.spv fragment_ship.spv vertex_explosions.spv fragment_explosions.spv vertex_overlay.spv fragment_overlay.spv vertex_hud.spv fragment_hud.spv
+all: vulkanasteroids fragment_background.spv vertex_background.spv vertex_sprite.spv fragment_sprite.spv vertex_explosions.spv fragment_explosions.spv vertex_overlay.spv fragment_overlay.spv vertex_hud.spv fragment_hud.spv
 vulkanasteroids: vulkanasteroids.o mymath.o stb_image.o
 
 stb_image.o: stb_image.h stb_image.cpp
@@ -36,10 +36,10 @@ fragment_background.spv: fragment_background.glsl
 vertex_background.spv: vertex_background.glsl
 	$(SHADERCOMPILER) -fshader-stage=vertex -o $@ $<
 
-fragment_ship.spv: fragment_ship.glsl Makefile
+fragment_sprite.spv: fragment_sprite.glsl Makefile
 	$(SHADERCOMPILER) $(MACROS) -fshader-stage=fragment -o $@ $<
 
-vertex_ship.spv: vertex_ship.glsl Makefile
+vertex_sprite.spv: vertex_sprite.glsl Makefile
 	$(SHADERCOMPILER) $(MACROS) -fshader-stage=vertex -o $@ $<
 
 fragment_explosions.spv: fragment_explosions.glsl

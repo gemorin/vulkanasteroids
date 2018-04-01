@@ -1647,7 +1647,7 @@ bool VulkanApp::loadShaders() {
     if (!createShaders(&backgroundVertexShader, &backgroundFragmentShader,
                        "vertex_background.spv", "fragment_background.spv")
      || !createShaders(&spriteVertexShader, &shipFragmentShader,
-                       "vertex_ship.spv", "fragment_ship.spv")
+                       "vertex_sprite.spv", "fragment_sprite.spv")
      || !createShaders(&explosions.vert, &explosions.frag,
                        "vertex_explosions.spv", "fragment_explosions.spv")
      || !createShaders(&textOverlay.vert, &textOverlay.frag,
