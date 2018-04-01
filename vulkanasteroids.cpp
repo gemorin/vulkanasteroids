@@ -2852,7 +2852,7 @@ bool VulkanApp::createOverlayVertex()
     createOverlayVertices(textOverlay.vertex.vertices, x, y, s);
     textOverlay.scoreStartIdx = textOverlay.vertex.vertices.size();
 
-    // Health
+    // Score
     char buf[32];
     sprintf(buf, "Score %6u", score);
     x = -0.95f;
