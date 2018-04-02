@@ -2004,7 +2004,7 @@ bool VulkanApp::createPipelines()
                                           VK_COLOR_COMPONENT_A_BIT;
     colorBlendAttachment.blendEnable = VK_TRUE;
     colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
-    colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
     colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
     colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
@@ -2566,7 +2566,7 @@ bool VulkanApp::createVertexBuffers()
 
     // First triangle of background with image
     constexpr MyPoint red(1.0f, 0.0f, 0.0f);
-    backgroundVertex.vertices.resize(12);
+    backgroundVertex.vertices.resize(6);
     auto* v = &backgroundVertex.vertices.front();
     *(v++) = {MyPoint{-0.5f, bottom, z}, red, 0.0f, 1.0f};
     *(v++) = {MyPoint{ 0.5f, bottom, z}, red, 1.0f, 1.0f};
@@ -2575,18 +2575,6 @@ bool VulkanApp::createVertexBuffers()
     *(v++) = {MyPoint{-0.5f, bottom, z}, red, 0.0f, 1.0f};
     *(v++) = {MyPoint{ 0.5f,    top, z}, red, 1.0f, 0.0f};
     *(v++) = {MyPoint{-0.5f,    top, z}, red, 0.0f, 0.0f};
-
-    // 3rd (no image)
-    bottom = top;
-    top = -getMinY();
-    constexpr MyPoint black(0.0f, 0.0f, 0.0f);
-    *(v++) = {MyPoint{-0.5f, bottom, z}, black, 2.0f, 2.0f};
-    *(v++) = {MyPoint{ 0.5f, bottom, z}, black, 2.0f, 2.0f};
-    *(v++) = {MyPoint{ 0.5f,    top, z}, black, 2.0f, 2.0f};
-    // 4th
-    *(v++) = {MyPoint{-0.5f, bottom, z}, black, 2.0f, 2.0f};
-    *(v++) = {MyPoint{ 0.5f,    top, z}, black, 2.0f, 2.0f};
-    *(v++) = {MyPoint{-0.5f,    top, z}, black, 2.0f, 2.0f};
 
     uint32_t numBytes = backgroundVertex.vertices.size() *
                         sizeof(backgroundVertex.vertices.front());
@@ -3566,6 +3554,29 @@ void VulkanApp::spawnNewAsteroid(double currentTime)
     const float halfXSize = bigAsteroidSize[0] / 2.0f;
     static uniform_real_distribution<float> disX(getMinX() + halfXSize,
                                                  -getMinX() + halfXSize);
+    MyPoint shipVertices[6];
+    const uint32_t startIdx = 6 * shipVertexIndex;
+    for (uint32_t i = 0; i < 6; ++i) {
+        const Vertex v = spriteVertex.vertices[startIdx + i];
+        shipVertices[i] = v.pos.transform(shipState.orientation);
+        shipVertices[i] += shipState.position;
+    }
+    MyAABB2 shipAABB;
+    shipAABB.min = {FLT_MAX, FLT_MAX};
+    shipAABB.max = { -FLT_MAX, -FLT_MAX};
+    for (uint32_t i = 0; i < 6; ++i) {
+        shipAABB.min.x = min(shipAABB.min.x, shipVertices[i].x);
+        shipAABB.min.y = min(shipAABB.min.y, shipVertices[i].y);
+
+        shipAABB.max.x = max(shipAABB.max.x, shipVertices[i].x);
+        shipAABB.max.y = max(shipAABB.max.y, shipVertices[i].y);
+    }
+    MyAABB2 asteroidsAABB[asteroidStates.size()];
+    for (uint32_t i = 0; i < asteroidStates.size(); ++i) {
+        float sz[2];
+        getAsteroidSize(sz, asteroidStates[i]);
+        asteroidsAABB[i] = getSphereAABB(sz, asteroidStates[i].position);
+    }
     while (1) {
         AsteroidState newAsteroid;
 #ifndef TEST_COLLISIONS
@@ -3573,12 +3584,22 @@ void VulkanApp::spawnNewAsteroid(double currentTime)
                                 -getMinY() - bigAsteroidSize[1] / 2.0f,
                                 0.0f};
 
-        MyAABB2 newAsteroidAABB = getSphereAABB(bigAsteroidSize, newAsteroid.position);
+        MyAABB2 newAsteroidAABB = getSphereAABB(bigAsteroidSize,
+                                                newAsteroid.position);
 
-        // XXX check overlap with other asteroids
-        if (newAsteroidAABB.overlap(getSphereAABB(shipSize,
-                                    shipState.getPosition())))
+        if (newAsteroidAABB.overlap(shipAABB)) {
             continue;
+        }
+        bool tryagain = false;
+        for (uint32_t i = 0; i < asteroidStates.size(); ++i) {
+            if (newAsteroidAABB.overlap(asteroidsAABB[i])) {
+                tryagain = true;
+                break;
+            }
+        }
+        if (tryagain) {
+            continue;
+        }
 
         // Generate velocity
         MyPoint direction(0.0f, 1.0f, 0.0f);
