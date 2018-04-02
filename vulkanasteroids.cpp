@@ -2621,7 +2621,7 @@ bool VulkanApp::createVertexBuffers()
     // engine effect
     t = &sprites.textures[sprites.shipEngineTextureIndex];
     v = &spriteVertex.vertices[6 * shipEngineVertexIndex];
-    spriteScale = 1.0f;
+    spriteScale = 3.0f;
     x = xscale * float(t->width) / 2.0f * spriteScale;
     float ysize = yscale * float(t->height) * spriteScale;
     float ybot = y;
@@ -3469,6 +3469,11 @@ bool VulkanApp::resetCommandBuffer(uint32_t i, double currentTime)
                 numToDraw -= maxDraw;
             }
         }
+        offset = vertexPushConstantsSize;
+        offset += MAX_SPRITES_PER_DRAW * sizeof(int);
+        vkCmdPushConstants(b, spritesPipelineLayout,
+                           VK_SHADER_STAGE_FRAGMENT_BIT,
+                           offset, sizeof(noEasingFactor), noEasingFactor);
     }
 
     // Bullet
