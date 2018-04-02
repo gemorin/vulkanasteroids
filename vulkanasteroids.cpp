@@ -15,15 +15,6 @@
 
 #include "mymath.h"
 
-#if 0
-#include "assets/stb_font_consolas_24_latin1.inl"
-#define STB_FONT_NAME stb_font_consolas_24_latin1
-#define STB_FONT_WIDTH STB_FONT_consolas_24_latin1_BITMAP_WIDTH
-#define STB_FONT_HEIGHT STB_FONT_consolas_24_latin1_BITMAP_HEIGHT
-#define STB_FIRST_CHAR STB_FONT_consolas_24_latin1_FIRST_CHAR
-#define STB_NUM_CHARS STB_FONT_consolas_24_latin1_NUM_CHARS
-#endif
-
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
 
@@ -160,11 +151,11 @@ class VulkanApp
     VkPipelineLayout backgroundPipelineLayout;
     VkSampler backgroundSampler;
 
-    // Ship
-    VkDescriptorSetLayout shipDescriptorLayout;
-    Descriptor shipDescriptor;
+    // Sprites (ship, asteroids, bullets)
+    VkDescriptorSetLayout spritesDescriptorLayout;
+    Descriptor spritesDescriptor;
     VkShaderModule spriteVertexShader;
-    VkShaderModule shipFragmentShader;
+    VkShaderModule spritesFragmentShader;
     static constexpr uint32_t shipVertexIndex = 0;
     static constexpr uint32_t shipEngineVertexIndex = 1;
     static constexpr uint32_t shipBulletVertexIndex = 2;
@@ -172,10 +163,9 @@ class VulkanApp
     static constexpr uint32_t asteroidVertexIndexMiddle = 4;
     static constexpr uint32_t asteroidVertexIndexSmall = 5;
     VertexBuffer spriteVertex;
-    VkPipeline shipPipeline;
-    VkPipelineLayout shipPipelineLayout;
-    VkSampler shipSampler;
-    //MyMatrix shipTransform;
+    VkPipeline spritesPipeline;
+    VkPipelineLayout spritesPipelineLayout;
+    VkSampler spritesSampler;
 
     struct ShipState {
         MyPoint position;
@@ -216,6 +206,7 @@ class VulkanApp
         MyQuaternion rotStart;
         MyQuaternion rotEnd;
         double rotStartTime = 0.0;
+        double birth;
 
         float mass = 5.0f;
         uint32_t textureIndex;
@@ -229,10 +220,11 @@ class VulkanApp
         void update(double currentTime, double dt, const VulkanApp *app);
     };
     constexpr static uint32_t maxNumAsteroids = 10;
-    constexpr static uint32_t vertexPushConstantsSize = NUM_ASTEROIDS_PER_DRAW*
+    constexpr static uint32_t vertexPushConstantsSize = MAX_SPRITES_PER_DRAW*
                                                         sizeof(MyMatrix);
-    constexpr static uint32_t fragTexPushConstantSize = NUM_ASTEROIDS_PER_DRAW *
-                                                        sizeof(int);
+    constexpr static uint32_t fragTexPushConstantSize =
+                            MAX_SPRITES_PER_DRAW * (sizeof(int)+sizeof(float)) +
+                            sizeof(float);
     struct SpriteTextures {
         static constexpr uint32_t shipTextureIndex = 0;
         static constexpr uint32_t shipEngineTextureIndex = 1;
@@ -244,7 +236,7 @@ class VulkanApp
         // Move sizes in our coord here XXX FIXME
 
         SpriteTextures() { textures.resize(asteroidTextureEndIndex + 1); }
-        static_assert((asteroidTextureEndIndex + 1) == SPRITE_TEXTURE_ARRAY_SIZE,
+        static_assert((asteroidTextureEndIndex+1) == SPRITE_TEXTURE_ARRAY_SIZE,
                       "texture array is not sized properly");
     } sprites;
 
@@ -505,8 +497,8 @@ void VulkanApp::resolveAsteroidCollisions(AsteroidState& a, AsteroidState& b,
                           ? a.velocity - b.velocity
                           : b.velocity - a.velocity;
     const float velDiffLen = velDiff.length();
+#if 1
     printf("time %lf\n", glfwGetTime());
-#if 0
     a.position.print("a pos ");
     a.velocity.print("a vel ");
     b.position.print("b pos ");
@@ -528,15 +520,17 @@ void VulkanApp::resolveAsteroidCollisions(AsteroidState& a, AsteroidState& b,
 
     const float s1 = (-quadB + sqrtDelta) / (2.0f * quadA);
     const float s2 = (-quadB - sqrtDelta) / (2.0f * quadA);
-    //printf("s1 %f s2 %f\n", s1, s2);
+    printf("s1 %f s2 %f\n", s1, s2);
     float s = s1 > s2 ? s1 : s2;
     if (goBackInTime)
         s *= -1.0f;
 
     a.position += (a.velocity) * s;
     b.position += (b.velocity) * s;
+#if 1
     a.position.print("adj a pos ");
     b.position.print("adj b pos ");
+#endif
 }
 
 void VulkanApp::getAsteroidSize(float *sz, const AsteroidState &a)
@@ -718,17 +712,17 @@ void VulkanApp::processCollisions(AsteroidState& a, AsteroidState& b)
     MyPoint impulsiveTorque = aRelativeContactPos.cross(impulse);
     MyPoint rotChange = impulsiveTorque.transform(a.inverseInertiaTensor);
     MyPoint velChange = impulse * (1.0f/a.mass);
-    velChange.print("velChange a ");
-    rotChange.print("rotChange a ");
+    //velChange.print("velChange a ");
+    //rotChange.print("rotChange a ");
     a.velocity += velChange;
     a.angularVelocity += rotChange.z;
 
     impulsiveTorque = impulse.cross(bRelativeContactPos.cross(impulse));
     rotChange = impulsiveTorque.transform(b.inverseInertiaTensor);
     velChange = impulse * (-1.0f/b.mass);
-    velChange.print("velChange b ");
-    rotChange.print("rotChange b ");
-    puts("");
+    //velChange.print("velChange b ");
+    //rotChange.print("rotChange b ");
+    //puts("");
 
     b.velocity += velChange;
     b.angularVelocity += rotChange.z;
@@ -966,7 +960,7 @@ MyMatrix VulkanApp::ortho(float bottom, float top, float left, float right,
     correct.set(2, 3, 0.5f);
 
     result = correct * result;
-    //result.print();
+    //result/print();
 
     return result;
 }
@@ -1029,7 +1023,7 @@ void VulkanApp::run()
             double fps = 100.0 / (currentTime - start);
             double diff = fps / prevFps;
             if (diff > 1.1 || diff < 0.9) {
-                printf("fps %.2lf\n", fps);
+                printf("fps %.0lf\n", fps);
             }
             prevFps = fps;
             updateStart = true;
@@ -1653,7 +1647,7 @@ bool VulkanApp::createShaders(VkShaderModule *vs,
 bool VulkanApp::loadShaders() {
     if (!createShaders(&backgroundVertexShader, &backgroundFragmentShader,
                        "vertex_background.spv", "fragment_background.spv")
-     || !createShaders(&spriteVertexShader, &shipFragmentShader,
+     || !createShaders(&spriteVertexShader, &spritesFragmentShader,
                        "vertex_sprite.spv", "fragment_sprite.spv")
      || !createShaders(&explosions.vert, &explosions.frag,
                        "vertex_explosions.spv", "fragment_explosions.spv")
@@ -1692,14 +1686,16 @@ bool VulkanApp::createRenderPass()
     attachments[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 #endif
 
+#ifdef MSAA
     attachments[1].format = devInfo.format.format;
-    attachments[1].samples = VK_SAMPLE_COUNT_1_BIT; // required for )esolve
+    attachments[1].samples = VK_SAMPLE_COUNT_1_BIT; // required for resolve
     attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     attachments[1].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+#endif
 
 #if 0
     attachments[2].format = findDepthFormat();
@@ -1815,7 +1811,7 @@ bool VulkanApp::createDescriptorSetLayout()
     layoutInfo.pBindings = layout;
 
     vkRet = vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr,
-                                        &shipDescriptorLayout);
+                                        &spritesDescriptorLayout);
     if (vkRet != VK_SUCCESS) {
         printf("vkCreateDescriptorSetLayout() failed with %d", vkRet);
         return false;
@@ -2011,10 +2007,10 @@ bool VulkanApp::createPipelines()
     colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
     colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
-    //colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-    //colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-    colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
     colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    //colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    //colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
 
     colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
                                           VK_COLOR_COMPONENT_G_BIT |
@@ -2084,21 +2080,21 @@ bool VulkanApp::createPipelines()
     pushConstantsRanges[0].size = vertexPushConstantsSize;
     pushConstantsRanges[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     pushConstantsRanges[1].offset = vertexPushConstantsSize;
-    pushConstantsRanges[1].size = fragTexPushConstantSize + sizeof(float);
+    pushConstantsRanges[1].size = fragTexPushConstantSize;
 
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutInfo.setLayoutCount = 1;
-    pipelineLayoutInfo.pSetLayouts = &shipDescriptorLayout;
+    pipelineLayoutInfo.pSetLayouts = &spritesDescriptorLayout;
     pipelineLayoutInfo.pushConstantRangeCount = 2;
     pipelineLayoutInfo.pPushConstantRanges = pushConstantsRanges;
 
     vkRet = vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr,
-                                   &shipPipelineLayout);
+                                   &spritesPipelineLayout);
     if (vkRet != VK_SUCCESS) {
        printf("vkCreatePipelineLayout failed with ret %d\n", vkRet);
        return false;
     }
-    pipelineInfo.layout = shipPipelineLayout;
+    pipelineInfo.layout = spritesPipelineLayout;
 
     // Change shaders
     vertShaderStageInfo.sType =
@@ -2110,13 +2106,13 @@ bool VulkanApp::createPipelines()
     fragShaderStageInfo.sType =
                            VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    fragShaderStageInfo.module = shipFragmentShader;
+    fragShaderStageInfo.module = spritesFragmentShader;
     fragShaderStageInfo.pName = "main";
     shaderStages[0] = vertShaderStageInfo;
     shaderStages[1] = fragShaderStageInfo;
 
     vkRet = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo,
-                                      nullptr, &shipPipeline);
+                                      nullptr, &spritesPipeline);
     if (vkRet != VK_SUCCESS) {
        printf("vkCreateGraphicsPipelines failed with ret %d\n", vkRet);
        return false;
@@ -2562,16 +2558,15 @@ bool VulkanApp::createBuffer(VkBuffer *buffer,
 
 bool VulkanApp::createVertexBuffers()
 {
-    const float bottom = getMinY();
-    const float top = bottom +
+    float bottom = getMinY();
+    float top = bottom +
                       float(backgroundTexture.height) /
                       float(backgroundTexture.width);
-    printf("top of texture %f\n", top);
     constexpr float z = 0.0f;
 
-    // First triangle of background
+    // First triangle of background with image
     constexpr MyPoint red(1.0f, 0.0f, 0.0f);
-    backgroundVertex.vertices.resize(6);
+    backgroundVertex.vertices.resize(12);
     auto* v = &backgroundVertex.vertices.front();
     *(v++) = {MyPoint{-0.5f, bottom, z}, red, 0.0f, 1.0f};
     *(v++) = {MyPoint{ 0.5f, bottom, z}, red, 1.0f, 1.0f};
@@ -2580,6 +2575,18 @@ bool VulkanApp::createVertexBuffers()
     *(v++) = {MyPoint{-0.5f, bottom, z}, red, 0.0f, 1.0f};
     *(v++) = {MyPoint{ 0.5f,    top, z}, red, 1.0f, 0.0f};
     *(v++) = {MyPoint{-0.5f,    top, z}, red, 0.0f, 0.0f};
+
+    // 3rd (no image)
+    bottom = top;
+    top = -getMinY();
+    constexpr MyPoint black(0.0f, 0.0f, 0.0f);
+    *(v++) = {MyPoint{-0.5f, bottom, z}, black, 2.0f, 2.0f};
+    *(v++) = {MyPoint{ 0.5f, bottom, z}, black, 2.0f, 2.0f};
+    *(v++) = {MyPoint{ 0.5f,    top, z}, black, 2.0f, 2.0f};
+    // 4th
+    *(v++) = {MyPoint{-0.5f, bottom, z}, black, 2.0f, 2.0f};
+    *(v++) = {MyPoint{ 0.5f,    top, z}, black, 2.0f, 2.0f};
+    *(v++) = {MyPoint{-0.5f,    top, z}, black, 2.0f, 2.0f};
 
     uint32_t numBytes = backgroundVertex.vertices.size() *
                         sizeof(backgroundVertex.vertices.front());
@@ -2629,11 +2636,6 @@ bool VulkanApp::createVertexBuffers()
     float ysize = yscale * float(t->height) * spriteScale;
     float ybot = y;
     float ytop = ybot + ysize;
-    printf("width %u height %u\n", devInfo.extent.width, devInfo.extent.height);
-    printf("minX %f minY %f\n", getMinX(), getMinY());
-    printf("xscale %f yscale %f\n", xscale, yscale);
-    printf("%f < x < %f (diff %f), %f < y < %f (diff %f)\n",
-           -x, x, 2.0f * x, ybot, ytop, ytop - ybot);
 
     *(v++) = {MyPoint{-x, ybot, z}, red, 0.0f, 1.0f};
     *(v++) = {MyPoint{ x, ybot, z}, red, 1.0f, 1.0f};
@@ -2679,8 +2681,6 @@ bool VulkanApp::createVertexBuffers()
         if (i == 0) {
             bigAsteroidSize[0] = 2 * x;
             bigAsteroidSize[1] = 2 * y;
-            printf("asteroid size %f %f\n", bigAsteroidSize[0],
-                    bigAsteroidSize[1]);
         }
         spriteScale /= 2.0;
     }
@@ -2890,7 +2890,6 @@ bool VulkanApp::createHUDVertex()
     float height = yscale * float(t->height) * spriteScale;
     float top = -0.930f;
     float bottom = top + height;
-    printf("%f bot\n", bottom);
     const float z = 0.0f;
     constexpr MyPoint red(1.0f, 0.0f, 0.0f);
 
@@ -3171,7 +3170,7 @@ bool VulkanApp::createShipDescriptor()
     poolInfo.maxSets = 1;
 
     VkResult vkRet = vkCreateDescriptorPool(device, &poolInfo, nullptr,
-                                            &shipDescriptor.pool);
+                                            &spritesDescriptor.pool);
     if (vkRet != VK_SUCCESS) {
         printf("vkCreateDescriptorPool failed with %d\n", vkRet);
         return false;
@@ -3179,11 +3178,11 @@ bool VulkanApp::createShipDescriptor()
 
     VkDescriptorSetAllocateInfo allocInfo = {};
     allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = shipDescriptor.pool;
+    allocInfo.descriptorPool = spritesDescriptor.pool;
     allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = &shipDescriptorLayout;
+    allocInfo.pSetLayouts = &spritesDescriptorLayout;
 
-    vkRet = vkAllocateDescriptorSets(device, &allocInfo, &shipDescriptor.set);
+    vkRet = vkAllocateDescriptorSets(device, &allocInfo, &spritesDescriptor.set);
     if (vkRet != VK_SUCCESS) {
         printf("vkAllocateDescriptorSets failed with %d\n", vkRet);
         return false;
@@ -3198,7 +3197,7 @@ bool VulkanApp::createShipDescriptor()
     VkDescriptorImageInfo samplerImageInfo = {};
     samplerImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     samplerImageInfo.imageView = nullptr;
-    samplerImageInfo.sampler = shipSampler;
+    samplerImageInfo.sampler = spritesSampler;
 
     VkDescriptorImageInfo textureImageInfo[sprites.textures.size()];
     memset(textureImageInfo, 0, sizeof(textureImageInfo));
@@ -3212,7 +3211,7 @@ bool VulkanApp::createShipDescriptor()
     VkWriteDescriptorSet descriptorWrite[3];
     memset(descriptorWrite, 0, sizeof(descriptorWrite));
     descriptorWrite[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrite[0].dstSet = shipDescriptor.set;
+    descriptorWrite[0].dstSet = spritesDescriptor.set;
     descriptorWrite[0].dstBinding = 0;
     descriptorWrite[0].dstArrayElement = 0;
     descriptorWrite[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -3220,7 +3219,7 @@ bool VulkanApp::createShipDescriptor()
     descriptorWrite[0].pBufferInfo = bufferInfo;
 
     descriptorWrite[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrite[1].dstSet = shipDescriptor.set;
+    descriptorWrite[1].dstSet = spritesDescriptor.set;
     descriptorWrite[1].dstBinding = 1;
     descriptorWrite[1].dstArrayElement = 0;
     descriptorWrite[1].descriptorType =
@@ -3230,7 +3229,7 @@ bool VulkanApp::createShipDescriptor()
     descriptorWrite[1].pImageInfo = &samplerImageInfo;
 
     descriptorWrite[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrite[2].dstSet = shipDescriptor.set;
+    descriptorWrite[2].dstSet = spritesDescriptor.set;
     descriptorWrite[2].dstBinding = 2;
     descriptorWrite[2].dstArrayElement = 0;
     descriptorWrite[2].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
@@ -3362,6 +3361,7 @@ bool VulkanApp::resetCommandBuffer(uint32_t i, double currentTime)
     renderPassInfo.clearValueCount = 1;
     renderPassInfo.pClearValues = clearColor;
 
+    // Background
     vkCmdBeginRenderPass(b, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
                       backgroundPipeline);
@@ -3375,58 +3375,59 @@ bool VulkanApp::resetCommandBuffer(uint32_t i, double currentTime)
 
     vkCmdDraw(b, backgroundVertex.vertices.size(), 1, 0, 0);
 
-    //MyMatrix shipTransform = shipState.getTransform();
-    //struct {
-    //    MyMatrix shipTransform;
-    //    int texIdx;
-    //} push;
-    //push.shipTransform = shipState.getTransform();
-    //push.texIdx = 0;
+    // Sprites
+    float noEasingFactor[MAX_SPRITES_PER_DRAW];
+    for (uint32_t i = 0; i < MAX_SPRITES_PER_DRAW; ++i)
+        noEasingFactor[i] = 1.0f;
     vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                      shipPipeline);
-    {
-        MyMatrix shipTransform = shipState.getTransform();
-        vkCmdPushConstants(b, shipPipelineLayout,
-                           VK_SHADER_STAGE_VERTEX_BIT, 0,
-                           sizeof(shipTransform), &shipTransform);
-        uint32_t idx = sprites.shipTextureIndex;
-        vkCmdPushConstants(b, shipPipelineLayout,
-                           VK_SHADER_STAGE_FRAGMENT_BIT,
-                           vertexPushConstantsSize,
-                           sizeof(idx), &idx);
-        float colorFix = 0.0f;
-        if (shipState.inHitAnim) {
-            const double diff = currentTime - shipState.startHitAnim;
-            if (diff > 2.0) {
-                shipState.inHitAnim = false;
-            }
-            else {
-                colorFix = 1.0f - diff / 2.0f;
-            }
-        }
-        vkCmdPushConstants(b, shipPipelineLayout,
-                           VK_SHADER_STAGE_FRAGMENT_BIT,
-                           vertexPushConstantsSize + fragTexPushConstantSize,
-                           sizeof(float), &colorFix);
-    }
+                      spritesPipeline);
+    MyMatrix shipTransform = shipState.getTransform();
+    vkCmdPushConstants(b, spritesPipelineLayout,
+                       VK_SHADER_STAGE_VERTEX_BIT, 0,
+                       sizeof(shipTransform), &shipTransform);
+    uint32_t offset = vertexPushConstantsSize;
+    uint32_t idx = sprites.shipTextureIndex;
+    vkCmdPushConstants(b, spritesPipelineLayout,
+                       VK_SHADER_STAGE_FRAGMENT_BIT,
+                       offset,
+                       sizeof(idx), &idx);
+    offset += MAX_SPRITES_PER_DRAW * sizeof(int);
+    vkCmdPushConstants(b, spritesPipelineLayout,
+                       VK_SHADER_STAGE_FRAGMENT_BIT,
+                       offset,
+                       sizeof(noEasingFactor), noEasingFactor);
+    offset += sizeof(noEasingFactor);
 
+    // Apply a change in color in the fragment shader.  Used to make the ship
+    // red when hit.
+    float colorFix = 0.0f;
+    if (shipState.inHitAnim) {
+        const double diff = currentTime - shipState.startHitAnim;
+        if (diff > 2.0) {
+            shipState.inHitAnim = false;
+        }
+        else {
+            colorFix = 1.0f - diff / 2.0f;
+        }
+    }
+    vkCmdPushConstants(b, spritesPipelineLayout,
+                       VK_SHADER_STAGE_FRAGMENT_BIT, offset,
+                       sizeof(float), &colorFix);
 
     buffers[0] = {spriteVertex.buffer};
     offsets[0] = {0};
     vkCmdBindVertexBuffers(b, 0, 1, buffers, offsets);
     vkCmdBindDescriptorSets(b, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                            shipPipelineLayout, 0, 1,
-                            &shipDescriptor.set, 0, nullptr);
+                            spritesPipelineLayout, 0, 1,
+                            &spritesDescriptor.set, 0, nullptr);
 
     vkCmdDraw(b, 6, 1, shipVertexIndex * 6, 0);
     float zero = 0.0f;
-    vkCmdPushConstants(b, shipPipelineLayout,
-                       VK_SHADER_STAGE_FRAGMENT_BIT,
-                       vertexPushConstantsSize + fragTexPushConstantSize,
-                       sizeof(float), &zero);
+    vkCmdPushConstants(b, spritesPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
+                       offset, sizeof(float), &zero);
     if (GLFW_PRESS == glfwGetKey(window, GLFW_KEY_UP)) {
         uint32_t idx = sprites.shipEngineTextureIndex;
-        vkCmdPushConstants(b, shipPipelineLayout,
+        vkCmdPushConstants(b, spritesPipelineLayout,
                            VK_SHADER_STAGE_FRAGMENT_BIT,
                            vertexPushConstantsSize,
                            sizeof(idx), &idx);
@@ -3437,6 +3438,7 @@ bool VulkanApp::resetCommandBuffer(uint32_t i, double currentTime)
     if (!asteroidStates.empty()) {
         uint32_t texIndices[asteroidStates.size()];
         MyMatrix transforms[asteroidStates.size()];
+        float easing[asteroidStates.size()];
         for (uint32_t sz = 0; sz < 3; ++sz) {
             uint32_t numToDraw = 0;
             for (uint32_t i = 0 ; i < asteroidStates.size(); ++i) {
@@ -3445,24 +3447,33 @@ bool VulkanApp::resetCommandBuffer(uint32_t i, double currentTime)
                 }
                 transforms[numToDraw] = asteroidStates[i].getTransform();
                 texIndices[numToDraw] = asteroidStates[i].textureIndex;
+                easing[numToDraw] = (currentTime - asteroidStates[i].birth) /
+                                    2.0f;
                 ++numToDraw;
             }
             if (numToDraw == 0) {
                 continue;
             }
 
-            const uint32_t maxDraw = NUM_ASTEROIDS_PER_DRAW;
+            const uint32_t maxDraw = MAX_SPRITES_PER_DRAW;
             const uint32_t numDrawCalls = numToDraw / maxDraw + 1;
-            for (uint32_t it = 0; it < numDrawCalls; ++it) {
-                vkCmdPushConstants(b, shipPipelineLayout,
+            for (uint32_t it = 0; numToDraw && it < numDrawCalls; ++it) {
+                vkCmdPushConstants(b, spritesPipelineLayout,
                                    VK_SHADER_STAGE_VERTEX_BIT, 0,
                                    sizeof(*transforms) * maxDraw,
                                    transforms + it * maxDraw);
-                vkCmdPushConstants(b, shipPipelineLayout,
+                vkCmdPushConstants(b, spritesPipelineLayout,
                                    VK_SHADER_STAGE_FRAGMENT_BIT,
                                    vertexPushConstantsSize,
                                    sizeof(*texIndices) * maxDraw,
                                    texIndices + it * maxDraw);
+                uint32_t off = vertexPushConstantsSize +
+                               sizeof(*texIndices) * maxDraw;
+                vkCmdPushConstants(b, spritesPipelineLayout,
+                                   VK_SHADER_STAGE_FRAGMENT_BIT,
+                                   off,
+                                   sizeof(*easing) * maxDraw,
+                                   easing + it * maxDraw);
                 vkCmdDraw(b, 6, min(maxDraw, numToDraw),
                           (asteroidVertexIndexBig + sz) * 6, 0);
                 numToDraw -= maxDraw;
@@ -3473,11 +3484,11 @@ bool VulkanApp::resetCommandBuffer(uint32_t i, double currentTime)
     // Bullet
     if (bulletState.live) {
         MyMatrix bulletTransform = bulletState.getTransform();
-        vkCmdPushConstants(b, shipPipelineLayout,
+        vkCmdPushConstants(b, spritesPipelineLayout,
                            VK_SHADER_STAGE_VERTEX_BIT, 0,
                            sizeof(bulletTransform), &bulletTransform);
         uint32_t idx = sprites.shipBulletTextureIndex;
-        vkCmdPushConstants(b, shipPipelineLayout,
+        vkCmdPushConstants(b, spritesPipelineLayout,
                            VK_SHADER_STAGE_FRAGMENT_BIT,
                            vertexPushConstantsSize,
                            sizeof(idx), &idx);
@@ -3608,9 +3619,10 @@ void VulkanApp::spawnNewAsteroid(double currentTime)
 
         newAsteroid.generateTensor();
         newAsteroid.rotStartTime = currentTime;
+        newAsteroid.birth = currentTime;
 
         asteroidStates.push_back(newAsteroid);
-        puts("spawned");
+        //puts("spawned");
         break;
     }
 }
@@ -3625,23 +3637,6 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime,
     //vkWaitForFences(device, 1, &swapChain[idx].fence, VK_TRUE, UINT64_MAX);
     //vkResetFences(device, 1, &swapChain[idx].fence);
 
-    //if (commandBuffersDirty[idx]) {
-    //    resetCommandBuffer(idx);
-    //    commandBuffersDirty[idx] = false;
-    //}
-
-#if 0
-    if (shipState.inRotation) {
-        shipState.updateOrientation(currentTime);
-    }
-    else {
-        if (GLFW_PRESS == glfwGetKey(window, GLFW_KEY_LEFT)
-         || GLFW_PRESS == glfwGetKey(window, GLFW_KEY_RIGHT)) {
-            bool pos = (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS);
-            shipState.initiateRotation(pos, currentTime);
-        }
-    }
-#endif
 #ifndef TEST_COLLISIONS
     if (asteroidStates.size() < maxNumAsteroids) {
         if (currentTime > (lastSpawnRandCheck + 1.0)) {
@@ -3782,12 +3777,12 @@ void VulkanApp::cleanupSwapChain()
         vkDestroyFramebuffer(device, frameBuffers[i], nullptr);
     }
     vkDestroyPipeline(device, backgroundPipeline, nullptr);
-    vkDestroyPipeline(device, shipPipeline, nullptr);
+    vkDestroyPipeline(device, spritesPipeline, nullptr);
     vkDestroyPipeline(device, explosions.pipeline, nullptr);
     vkDestroyPipeline(device, textOverlay.pipeline, nullptr);
     vkDestroyPipeline(device, hud.pipeline, nullptr);
     vkDestroyPipelineLayout(device, backgroundPipelineLayout, nullptr);
-    vkDestroyPipelineLayout(device, shipPipelineLayout, nullptr);
+    vkDestroyPipelineLayout(device, spritesPipelineLayout, nullptr);
     vkDestroyPipelineLayout(device, explosions.pipelineLayout, nullptr);
     vkDestroyPipelineLayout(device, textOverlay.pipelineLayout, nullptr);
     vkDestroyPipelineLayout(device, hud.pipelineLayout, nullptr);
@@ -3795,7 +3790,7 @@ void VulkanApp::cleanupSwapChain()
     vkDestroyShaderModule(device, backgroundVertexShader, nullptr);
     vkDestroyShaderModule(device, backgroundFragmentShader, nullptr);
     vkDestroyShaderModule(device, spriteVertexShader, nullptr);
-    vkDestroyShaderModule(device, shipFragmentShader, nullptr);
+    vkDestroyShaderModule(device, spritesFragmentShader, nullptr);
     vkDestroyShaderModule(device, explosions.frag, nullptr);
     vkDestroyShaderModule(device, explosions.vert, nullptr);
     vkDestroyShaderModule(device, textOverlay.frag, nullptr);
@@ -3826,7 +3821,7 @@ void VulkanApp::cleanupSwapChain()
     explosions.atlas.cleanup(device);
     textOverlay.font.cleanup(device);
     hud.health.cleanup(device);
-    vkDestroySampler(device, shipSampler, nullptr);
+    vkDestroySampler(device, spritesSampler, nullptr);
     vkDestroySampler(device, explosions.sampler, nullptr);
     vkDestroySampler(device, textOverlay.fontSampler, nullptr);
     vkDestroySampler(device, hud.healthSampler, nullptr);
@@ -3854,12 +3849,12 @@ void VulkanApp::cleanup()
     vkFreeMemory(device, vpUniformMemory, nullptr);
 
     vkDestroyDescriptorPool(device, backgroundDescriptor.pool, nullptr);
-    vkDestroyDescriptorPool(device, shipDescriptor.pool, nullptr);
+    vkDestroyDescriptorPool(device, spritesDescriptor.pool, nullptr);
     vkDestroyDescriptorPool(device, explosions.desc.pool, nullptr);
     vkDestroyDescriptorPool(device, textOverlay.desc.pool, nullptr);
     vkDestroyDescriptorPool(device, hud.desc.pool, nullptr);
     vkDestroyDescriptorSetLayout(device, backgroundDescriptorLayout, nullptr);
-    vkDestroyDescriptorSetLayout(device, shipDescriptorLayout, nullptr);
+    vkDestroyDescriptorSetLayout(device, spritesDescriptorLayout, nullptr);
     vkDestroyDescriptorSetLayout(device, explosions.layout, nullptr);
     vkDestroyDescriptorSetLayout(device, textOverlay.layout, nullptr);
     vkDestroyDescriptorSetLayout(device, hud.layout, nullptr);
@@ -3884,29 +3879,6 @@ void VulkanApp::onResize(int width, int height)
 
 void VulkanApp::onKey(int /*key*/, int /*action*/)
 {
-#if 0
-    if (action != GLFW_PRESS)
-        return;
-#if 0
-    if (GLFW_KEY_UP == key) {
-        shipTransform.set(1, 3, shipTransform.get(1, 3) + 0.05f);
-    }
-    else if (GLFW_KEY_DOWN == key) {
-        shipTransform.set(1, 3, shipTransform.get(1, 3) - 0.05f);
-    }
-    //shipTransform.rotateZ(-M_PI/2.0f);
-#endif
-    const float delta = M_PI/18.0f;
-    if (GLFW_KEY_RIGHT == key || GLFW_KEY_LEFT == key) {
-        if (!shipState.inRotation) {
-            shipState.rotate(key == GLFW_KEY_LEFT);
-        }
-    }
-
-    //for (uint32_t i = 0; i < commandBuffersDirty.size(); ++i) {
-    //    commandBuffersDirty[i] = true;
-    //}
-#endif
 }
 
 void VulkanApp::copyBufferToImage(VkBuffer buffer, VkImage image,
@@ -3923,11 +3895,7 @@ void VulkanApp::copyBufferToImage(VkBuffer buffer, VkImage image,
     region.imageSubresource.baseArrayLayer = 0;
     region.imageSubresource.layerCount = 1;
     region.imageOffset = {0, 0, 0};
-    region.imageExtent = {
-        width,
-        height,
-        1
-    };
+    region.imageExtent = { width, height, 1 };
 
     vkCmdCopyBufferToImage(commandBuffer, buffer, image,
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
@@ -3936,26 +3904,17 @@ void VulkanApp::copyBufferToImage(VkBuffer buffer, VkImage image,
 }
 
 bool VulkanApp::loadFont(struct Texture *texture,
-                         //stb_fontchar *fontData)
                          stbtt_bakedchar *fontData,
                          int firstChar,
                          const char *file)
 {
-#if 1
     vector<char> ttf;
     if (!readFile(&ttf, file)) {
         return false;
     }
     unsigned char font[512 * 512];
-    int ret = stbtt_BakeFontBitmap((const unsigned char*)ttf.data(),0, 24.0, font, 512, 512, firstChar,
-                         126-firstChar, fontData);
-    printf("stbtt_BakeFontBitmap returned %d\n", ret);
-#else
-
-
-    unsigned char font[STB_FONT_HEIGHT][STB_FONT_WIDTH];
-    STB_FONT_NAME(fontData, font, STB_FONT_HEIGHT);
-#endif
+    stbtt_BakeFontBitmap((const unsigned char*)ttf.data(),0, 24.0,
+                         font, 512, 512, firstChar, 126 - firstChar, fontData);
     VkDeviceSize imageSize = sizeof(font);
     VkBuffer stagingBuffer;
     VkDeviceMemory stagingBufferMemory;
@@ -3969,8 +3928,8 @@ bool VulkanApp::loadFont(struct Texture *texture,
     vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
     memcpy(data, font, static_cast<size_t>(imageSize));
     vkUnmapMemory(device, stagingBufferMemory);
-    texture->width = 512; //STB_FONT_WIDTH;
-    texture->height = 512; //STB_FONT_HEIGHT;
+    texture->width = 512;
+    texture->height = 512;
 
     VkImageCreateInfo imageInfo = {};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -4190,7 +4149,7 @@ bool VulkanApp::createTextures() {
         printf("vkCreateSampler failed with %d\n", vkRet);
         return false;
     }
-    vkRet = vkCreateSampler(device, &samplerInfo, nullptr, &shipSampler);
+    vkRet = vkCreateSampler(device, &samplerInfo, nullptr, &spritesSampler);
     if (vkRet != VK_SUCCESS) {
         printf("vkCreateSampler failed with %d\n", vkRet);
         return false;

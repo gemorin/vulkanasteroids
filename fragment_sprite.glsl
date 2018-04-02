@@ -10,7 +10,8 @@ layout(location = 2) flat in int instanceIdx;
 
 layout(location = 0) out vec4 outColor;
 layout(push_constant) uniform PushConsts {
-	layout (offset = (NUM_ASTEROIDS_PER_DRAW * 64)) int idx[NUM_ASTEROIDS_PER_DRAW];
+	layout (offset = (MAX_SPRITES_PER_DRAW * 64)) int idx[MAX_SPRITES_PER_DRAW];
+	float easingFactor[MAX_SPRITES_PER_DRAW];
 	float colorFix;
 } pushConsts;
 
@@ -21,6 +22,8 @@ void main() {
     outColor.g -= pushConsts.colorFix * 0.4 * length(outColor.xyz);
     outColor.b -= pushConsts.colorFix * 0.4 * length(outColor.xyz);
     clamp(outColor, 0.0, 1.0);
+    const float easing = pushConsts.easingFactor[instanceIdx];
+    outColor.a = outColor.a * smoothstep(0.0, 1.0, easing);
     //outColor.a = 1.0;
     //outColor = vec4(color, 1.0);
 }

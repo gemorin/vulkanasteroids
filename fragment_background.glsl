@@ -9,6 +9,10 @@ layout(location = 1) in vec2 uv;
 layout(location = 0) out vec4 outColor;
 
 void main() {
-    //outColor = vec4(color, 1.0f);
-    outColor = texture(backgroundSampler, uv);
+    if (uv.x == 2.0) {
+        outColor = vec4(color, 1.0f);
+    }
+    else {
+        outColor = texture(backgroundSampler, uv);
+    }
 }
