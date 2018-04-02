@@ -2119,6 +2119,8 @@ bool VulkanApp::createPipelines()
     }
 
     // particles pipeline
+    colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+
     memset(&pushConstantsRanges, 0, sizeof(pushConstantsRanges));
     pushConstantsRanges[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     pushConstantsRanges[0].offset = 0;
@@ -3552,8 +3554,12 @@ bool VulkanApp::resetCommandBuffer(uint32_t i, double currentTime)
 void VulkanApp::spawnNewAsteroid(double currentTime)
 {
     const float halfXSize = bigAsteroidSize[0] / 2.0f;
+    const float halfYSize = bigAsteroidSize[1] / 2.0f;
     static uniform_real_distribution<float> disX(getMinX() + halfXSize,
                                                  -getMinX() + halfXSize);
+    static uniform_real_distribution<float> disY(getMinY() + halfYSize,
+                                                 -getMinY() + halfYSize);
+    static uniform_real_distribution<int> spawnSide(0, 1);
     MyPoint shipVertices[6];
     const uint32_t startIdx = 6 * shipVertexIndex;
     for (uint32_t i = 0; i < 6; ++i) {
@@ -3579,10 +3585,21 @@ void VulkanApp::spawnNewAsteroid(double currentTime)
     }
     while (1) {
         AsteroidState newAsteroid;
-#ifndef TEST_COLLISIONS
-        newAsteroid.position = {disX(randomGen),
-                                -getMinY() - bigAsteroidSize[1] / 2.0f,
-                                0.0f};
+        if (spawnSide(randomGen)) {
+            newAsteroid.position = {disX(randomGen),
+                                    -getMinY() - bigAsteroidSize[1] / 2.0f,
+                                    0.0f};
+            if (spawnSide(randomGen)) {
+                newAsteroid.position.y *= -1.0f;
+            }
+        }
+        else {
+            newAsteroid.position = {-getMinX() - bigAsteroidSize[0] / 2.0f,
+                                    disY(randomGen), 0.0f};
+            if (spawnSide(randomGen)) {
+                newAsteroid.position.y *= -1.0f;
+            }
+        }
 
         MyAABB2 newAsteroidAABB = getSphereAABB(bigAsteroidSize,
                                                 newAsteroid.position);
@@ -3613,21 +3630,6 @@ void VulkanApp::spawnNewAsteroid(double currentTime)
         static uniform_real_distribution<float> velocityFactor(1e-1f,2e-1f);
         v *= velocityFactor(randomGen);
         newAsteroid.velocity = v;
-#else
-        float v = 8e-2f;
-        if (asteroidStates.empty()) {
-            newAsteroid.position = { getMinX() + halfXSize,
-                                     -getMinY() - bigAsteroidSize[1] / 2.0f,
-                                     0.0f };
-            newAsteroid.velocity = { v, -v, 0.0f };
-        }
-        else {
-            newAsteroid.position = { -getMinX() - halfXSize,
-                                     -getMinY() - bigAsteroidSize[1] / 2.0f,
-                                     0.0f };
-            newAsteroid.velocity = { -v, -v, 0.0f };
-        }
-#endif
 
         uniform_int_distribution<uint32_t> asteroidTextures{
                                    sprites.asteroidTextureStartIndex,

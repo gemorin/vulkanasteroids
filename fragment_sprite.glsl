@@ -23,7 +23,7 @@ void main() {
     outColor.b -= pushConsts.colorFix * 0.4 * length(outColor.xyz);
     clamp(outColor, 0.0, 1.0);
     const float easing = pushConsts.easingFactor[instanceIdx];
-    outColor.a = outColor.a * smoothstep(0.0, 1.0, easing);
+    outColor.a = outColor.a * mix(0.0, 1.0, easing);
     //outColor.a = 1.0;
     //outColor = vec4(color, 1.0);
 }
