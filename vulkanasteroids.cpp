@@ -425,7 +425,8 @@ class VulkanApp
     void spawnNewAsteroid(double currentTime);
     static MyAABB2 getSphereAABB(float *, MyPoint position);
     void resolveAsteroidCollisions(AsteroidState& a, AsteroidState& b,
-                                   bool goBackInTime);
+                                   bool goBackInTime, uint32_t i,
+                                   uint32_t j);
     void checkForBulletHit();
     void getAsteroidSize(float *sz, const AsteroidState &a);
     void onBulletHit(AsteroidState &a, uint32_t aIdx);
@@ -482,7 +483,8 @@ class VulkanApp
 };
 
 void VulkanApp::resolveAsteroidCollisions(AsteroidState& a, AsteroidState& b,
-                                          bool goBackInTime)
+                                          bool goBackInTime,
+                                          uint32_t i, uint32_t j)
 {
     // XXX this does not handle when we wrapped around the screen
     MyPoint segment = b.position - a.position;
@@ -498,7 +500,8 @@ void VulkanApp::resolveAsteroidCollisions(AsteroidState& a, AsteroidState& b,
                           : b.velocity - a.velocity;
     const float velDiffLen = velDiff.length();
 #if 1
-    printf("time %lf\n", glfwGetTime());
+    printf("time %lf goBackInTime %d a idx %u b idx %u\n", glfwGetTime(), goBackInTime,
+           i, j);
     a.position.print("a pos ");
     a.velocity.print("a vel ");
     b.position.print("b pos ");
@@ -530,6 +533,8 @@ void VulkanApp::resolveAsteroidCollisions(AsteroidState& a, AsteroidState& b,
 #if 1
     a.position.print("adj a pos ");
     b.position.print("adj b pos ");
+    printf("a radius %.5f b radius %.5f\n", a.radius, b.radius);
+    printf("distance %.5f\n", (b.position - a.position).length());
 #endif
 }
 
@@ -601,7 +606,8 @@ void VulkanApp::onBulletHit(AsteroidState &a, uint32_t aIdx)
     asteroidStates.back().velocity *= -1.0f;
 
     // Adjust their positions
-    resolveAsteroidCollisions(a, asteroidStates.back(), false);
+    resolveAsteroidCollisions(a, asteroidStates.back(), false,
+                              aIdx, asteroidStates.size() - 1);
 }
 
 void VulkanApp::checkForAsteroidHit(double currentTime)
@@ -669,7 +675,15 @@ void VulkanApp::processCollisions(AsteroidState& a, AsteroidState& b)
     // Compute contact basis transform -- FIXME up might not work as a 2nd
     // vector
     MyPoint y,z;
-    MyPoint::makeOrthornormalBasis(&y, &z, normal, MyPoint(0.0f, 1.0f, 0.0f));
+
+    if (fabsf(normal.x) > fabsf(normal.y)) {
+        MyPoint::makeOrthornormalBasis(&y, &z, normal,
+                                       MyPoint(0.0f, 1.0f, 0.0f));
+    }
+    else {
+        MyPoint::makeOrthornormalBasis(&y, &z, normal,
+                                       MyPoint(1.0f, 0.0f, 0.0f));
+    }
     MyMatrix worldToContactTransform;
     worldToContactTransform.set(0, 0, normal.x);
     worldToContactTransform.set(0, 1, normal.y);
@@ -712,17 +726,17 @@ void VulkanApp::processCollisions(AsteroidState& a, AsteroidState& b)
     MyPoint impulsiveTorque = aRelativeContactPos.cross(impulse);
     MyPoint rotChange = impulsiveTorque.transform(a.inverseInertiaTensor);
     MyPoint velChange = impulse * (1.0f/a.mass);
-    //velChange.print("velChange a ");
-    //rotChange.print("rotChange a ");
+    velChange.print("velChange a ");
+    rotChange.print("rotChange a ");
     a.velocity += velChange;
     a.angularVelocity += rotChange.z;
 
     impulsiveTorque = impulse.cross(bRelativeContactPos.cross(impulse));
     rotChange = impulsiveTorque.transform(b.inverseInertiaTensor);
     velChange = impulse * (-1.0f/b.mass);
-    //velChange.print("velChange b ");
-    //rotChange.print("rotChange b ");
-    //puts("");
+    velChange.print("velChange b ");
+    rotChange.print("rotChange b ");
+    puts("");
 
     b.velocity += velChange;
     b.angularVelocity += rotChange.z;
@@ -3437,8 +3451,7 @@ bool VulkanApp::resetCommandBuffer(uint32_t i, double currentTime)
                 }
                 transforms[numToDraw] = asteroidStates[i].getTransform();
                 texIndices[numToDraw] = asteroidStates[i].textureIndex;
-                easing[numToDraw] = (currentTime - asteroidStates[i].birth) /
-                                    2.0f;
+                easing[numToDraw] = (currentTime - asteroidStates[i].birth);
                 ++numToDraw;
             }
             if (numToDraw == 0) {
@@ -3709,7 +3722,7 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime,
     for (uint32_t i = 0; i < asteroidStates.size(); ++i) {
         for (uint32_t j = (i+1) ; j < asteroidStates.size(); ++j) {
             resolveAsteroidCollisions(asteroidStates[i], asteroidStates[j],
-                                      true);
+                                      true, i, j);
         }
     }
     if (bulletState.live && !asteroidStates.empty()) {
