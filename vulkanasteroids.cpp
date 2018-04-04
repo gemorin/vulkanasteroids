@@ -256,6 +256,7 @@ class VulkanApp
     uniform_int_distribution<> asteroidSpawnRand{1, 3};
     double lastSpawnRandCheck = 0.0;
     uint32_t score = 0;
+    uint32_t health = 100;
 
     struct Explosions {
         Texture atlas;
@@ -301,6 +302,10 @@ class VulkanApp
         Texture health;
         VkSampler healthSampler;
         VertexBuffer vertex;
+        void *vertexData;
+        float top, bottom;
+        float left;
+        float fullWidth;
         VkDescriptorSetLayout layout;
         Descriptor desc;
 
@@ -435,7 +440,8 @@ class VulkanApp
     double getDeltaVelocity(const AsteroidState& a,
                             const MyPoint& relativeContactPos,
                             const MyPoint& normal);
-    void changeScore(uint32_t);
+    void changeScore(uint32_t add);
+    void changeHealth(uint32_t sub);
 
     bool renderFrame(uint32_t renderCount, double currentTime,
                      double dt);
@@ -637,6 +643,7 @@ void VulkanApp::checkForAsteroidHit(double currentTime)
 
         if (ship.overlap(a)) {
             shipState.inHitAnim = true;
+            changeHealth(10 - 2 * asteroidStates[i].sizeType);
             shipState.startHitAnim = currentTime;
             explosions.actives.emplace_back(asteroidStates[i].position, 0.0);
             asteroidStates.erase(asteroidStates.begin() + i);
@@ -729,6 +736,7 @@ void VulkanApp::processCollisions(AsteroidState& a, AsteroidState& b)
     velChange.print("velChange a ");
     rotChange.print("rotChange a ");
     a.velocity += velChange;
+    a.velocity.print("a vel");
     a.angularVelocity += rotChange.z;
 
     impulsiveTorque = impulse.cross(bRelativeContactPos.cross(impulse));
@@ -739,6 +747,7 @@ void VulkanApp::processCollisions(AsteroidState& a, AsteroidState& b)
     puts("");
 
     b.velocity += velChange;
+    b.velocity.print("a vel");
     b.angularVelocity += rotChange.z;
 }
 
@@ -2041,7 +2050,7 @@ bool VulkanApp::createPipelines()
     colorBlending.blendConstants[0] = 0.0f;
     colorBlending.blendConstants[1] = 0.0f;
     colorBlending.blendConstants[2] = 0.0f;
-    colorBlending.blendConstants[3] = 0.0f;
+    colorBlending.blendConstants[3] = 1.0f;
 
     // vulkan dynamic states
     // VkPipelineDynamicStateCreateInfo dynamicState = {};
@@ -2840,6 +2849,8 @@ void VulkanApp::changeScore(uint32_t add)
            numBytes);
 }
 
+
+
 bool VulkanApp::createOverlayVertex()
 {
     const float pixelWidth = 2.0f / float(devInfo.extent.width);
@@ -2883,29 +2894,56 @@ bool VulkanApp::createOverlayVertex()
     return true;
 }
 
+void VulkanApp::changeHealth(uint32_t sub)
+{
+    if (health > sub)
+        health -= sub;
+    else
+        health = 0;
+
+    //hud.vertex.vertices.resize(6);
+    float vv = float(health) / 100.f;
+    constexpr float z = 0.0f;
+    constexpr MyPoint red(1.0f, 0.0f, 0.0f);
+    auto *v = &hud.vertex.vertices.front();
+
+    float right = hud.left + hud.fullWidth * vv;
+    *(v++) = {MyPoint{hud.left, hud.bottom, z}, red, 0.0f, vv};
+    *(v++) = {MyPoint{right,    hud.bottom, z}, red, 1.0f, vv};
+    *(v++) = {MyPoint{right,    hud.top, z}, red, 1.0f, 0.0f};
+    // 2nd triangle
+    *(v++) = {MyPoint{hud.left, hud.bottom, z}, red, 0.0f, vv};
+    *(v++) = {MyPoint{right,    hud.top,    z}, red, 1.0f, 0.0f};
+    *(v++) = {MyPoint{hud.left, hud.top,    z}, red, 0.0f, 0.0f};
+    uint32_t numBytes = hud.vertex.vertices.size() *
+                        sizeof(hud.vertex.vertices.front());
+    memcpy(hud.vertexData, hud.vertex.vertices.data(), numBytes);
+}
+
 bool VulkanApp::createHUDVertex()
 {
     const float xscale = -2.0f * getMinX() / float(devInfo.extent.width);
     const float yscale = -2.0f * getMinY() / float(devInfo.extent.height);
     const Texture *t = &hud.health;
     const float spriteScale = 3.0f;
-    float left = float(t->width) / -2.0f * xscale * spriteScale;
-    float right = -left;
+    hud.left = float(t->width) / -2.0f * xscale * spriteScale;
+    float right = -hud.left;
+    hud.fullWidth = right - hud.left;
     float height = yscale * float(t->height) * spriteScale;
-    float top = -0.930f;
-    float bottom = top + height;
+    hud.top = -0.930f;
+    hud.bottom = hud.top + height;
     const float z = 0.0f;
     constexpr MyPoint red(1.0f, 0.0f, 0.0f);
 
     hud.vertex.vertices.resize(6);
     auto *v = &hud.vertex.vertices.front();
-    *(v++) = {MyPoint{left,  bottom, z}, red, 0.0f, 1.0f};
-    *(v++) = {MyPoint{right, bottom, z}, red, 1.0f, 1.0f};
-    *(v++) = {MyPoint{right,    top, z}, red, 1.0f, 0.0f};
+    *(v++) = {MyPoint{hud.left, hud.bottom, z}, red, 0.0f, 1.0f};
+    *(v++) = {MyPoint{right,    hud.bottom, z}, red, 1.0f, 1.0f};
+    *(v++) = {MyPoint{right,    hud.top, z}, red, 1.0f, 0.0f};
     // 2nd triangle
-    *(v++) = {MyPoint{left,  bottom, z}, red, 0.0f, 1.0f};
-    *(v++) = {MyPoint{right,    top, z}, red, 1.0f, 0.0f};
-    *(v++) = {MyPoint{left,     top, z}, red, 0.0f, 0.0f};
+    *(v++) = {MyPoint{hud.left, hud.bottom, z}, red, 0.0f, 1.0f};
+    *(v++) = {MyPoint{right,    hud.top,    z}, red, 1.0f, 0.0f};
+    *(v++) = {MyPoint{hud.left, hud.top,    z}, red, 0.0f, 0.0f};
 
     uint32_t numBytes = hud.vertex.vertices.size() *
                         sizeof(hud.vertex.vertices.front());
@@ -2917,10 +2955,10 @@ bool VulkanApp::createHUDVertex()
                       numBytes, vertexUsage, memFlags, false)) {
         return false;
     }
-    void *data;
-    vkMapMemory(device, hud.vertex.memory, 0, numBytes, 0, &data);
-    memcpy(data, hud.vertex.vertices.data(), numBytes);
-    vkUnmapMemory(device, hud.vertex.memory);
+    vkMapMemory(device, hud.vertex.memory, 0, numBytes, 0, &hud.vertexData);
+    memcpy(hud.vertexData, hud.vertex.vertices.data(), numBytes);
+
+    // Don't unmap
 
     return true;
 }

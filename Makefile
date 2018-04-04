@@ -9,7 +9,7 @@ SHADERCOMPILER=$(VULKANDIR)/macOS/bin/glslc
 VULKANINCPATH=$(VULKANDIR)/MoltenVK/include
 VULKANLIBPATH=$(VULKANDIR)/macOS/lib
 
-#VULKANDIR=/Users/guillaume/dev/MoltenVK/Package/Debug/MoltenVK
+#VULKANDIR=/Users/guillaume/dev/MoltenVK/Package/Release/MoltenVK
 VULKANDIR=/Users/guillaume/dev/Vulkan-LoaderAndValidationLayers
 VULKANINCPATH=$(VULKANDIR)/external/MoltenVK/Package/Release/MoltenVK/include/
 VULKANLIBPATH=$(VULKANDIR)/build/loader
