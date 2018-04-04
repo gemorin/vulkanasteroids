@@ -436,7 +436,8 @@ class VulkanApp
     void getAsteroidSize(float *sz, const AsteroidState &a);
     void onBulletHit(AsteroidState &a, uint32_t aIdx);
     void checkForAsteroidHit(double currentTime);
-    void processCollisions(AsteroidState& a, AsteroidState& b);
+    void processCollisions(AsteroidState& a, AsteroidState& b, uint32_t i,
+                           uint32_t j);
     double getDeltaVelocity(const AsteroidState& a,
                             const MyPoint& relativeContactPos,
                             const MyPoint& normal);
@@ -497,7 +498,7 @@ void VulkanApp::resolveAsteroidCollisions(AsteroidState& a, AsteroidState& b,
     const float len = segment.length();
 
     const float collisionDistance = a.radius + b.radius;
-    if (len >= collisionDistance) {
+    if (len > collisionDistance) {
         // Nothing to do
         return;
     }
@@ -506,7 +507,8 @@ void VulkanApp::resolveAsteroidCollisions(AsteroidState& a, AsteroidState& b,
                           : b.velocity - a.velocity;
     const float velDiffLen = velDiff.length();
 #if 1
-    printf("time %lf goBackInTime %d a idx %u b idx %u\n", glfwGetTime(), goBackInTime,
+    printf("\ntime %lf goBackInTime %d a idx %u b idx %u\n", glfwGetTime(),
+           goBackInTime,
            i, j);
     a.position.print("a pos ");
     a.velocity.print("a vel ");
@@ -665,7 +667,8 @@ double VulkanApp::getDeltaVelocity(const AsteroidState& a,
     return deltaVelocityWorld.dot(normal) + 1.0f / a.mass;
 }
 
-void VulkanApp::processCollisions(AsteroidState& a, AsteroidState& b)
+void VulkanApp::processCollisions(AsteroidState& a, AsteroidState& b,
+                                  uint32_t i, uint32_t j)
 {
     const MyPoint segment = a.position - b.position;
     const float len = segment.length();
@@ -674,6 +677,8 @@ void VulkanApp::processCollisions(AsteroidState& a, AsteroidState& b)
         // Nothing to do
         return;
     }
+
+    printf("time %lf contact a idx %u b idx %u\n", glfwGetTime(), i, j);
 
     // compute normal
     MyPoint normal = segment * 1.0f;
@@ -3751,7 +3756,7 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime,
 
     for (uint32_t i = 0; i < asteroidStates.size(); ++i) {
         for (uint32_t j = (i+1) ; j < asteroidStates.size(); ++j) {
-            processCollisions(asteroidStates[i], asteroidStates[j]);
+            processCollisions(asteroidStates[i], asteroidStates[j], i, j);
         }
     }
     for (AsteroidState& a : asteroidStates)
