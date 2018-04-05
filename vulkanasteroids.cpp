@@ -2231,11 +2231,14 @@ bool VulkanApp::createPipelines()
     }
 
     // HUD
+    pushConstantsRanges[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    pushConstantsRanges[0].offset = 0;
+    pushConstantsRanges[0].size = sizeof(int);
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutInfo.setLayoutCount = 1;
     pipelineLayoutInfo.pSetLayouts = &hud.layout;
-    pipelineLayoutInfo.pushConstantRangeCount = 0;
-    pipelineLayoutInfo.pPushConstantRanges = nullptr;
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = pushConstantsRanges;
 
     vkRet = vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr,
                                    &hud.pipelineLayout);
@@ -2910,9 +2913,11 @@ void VulkanApp::changeHealth(uint32_t sub)
     float vv = float(health) / 100.f;
     constexpr float z = 0.0f;
     constexpr MyPoint red(1.0f, 0.0f, 0.0f);
-    auto *v = &hud.vertex.vertices.front();
 
+    hud.vertex.vertices.resize(12);
+    auto *v = &hud.vertex.vertices.front();
     float right = hud.left + hud.fullWidth * vv;
+    float end = hud.left + hud.fullWidth;
     *(v++) = {MyPoint{hud.left, hud.bottom, z}, red, 0.0f, vv};
     *(v++) = {MyPoint{right,    hud.bottom, z}, red, 1.0f, vv};
     *(v++) = {MyPoint{right,    hud.top, z}, red, 1.0f, 0.0f};
@@ -2920,6 +2925,15 @@ void VulkanApp::changeHealth(uint32_t sub)
     *(v++) = {MyPoint{hud.left, hud.bottom, z}, red, 0.0f, vv};
     *(v++) = {MyPoint{right,    hud.top,    z}, red, 1.0f, 0.0f};
     *(v++) = {MyPoint{hud.left, hud.top,    z}, red, 0.0f, 0.0f};
+
+    constexpr MyPoint gray(0.2f, 0.2f, 0.2f);
+    *(v++) = {MyPoint{right, hud.bottom, z}, gray, 0.0f, vv};
+    *(v++) = {MyPoint{end,    hud.bottom, z}, gray, 1.0f, vv};
+    *(v++) = {MyPoint{end,  hud.top, z}, gray, 1.0f, 0.0f};
+    // 2nd triangle
+    *(v++) = {MyPoint{right, hud.bottom, z}, gray, 0.0f, vv};
+    *(v++) = {MyPoint{end,    hud.top,    z}, gray, 1.0f, 0.0f};
+    *(v++) = {MyPoint{right, hud.top,    z}, gray, 0.0f, 0.0f};
     uint32_t numBytes = hud.vertex.vertices.size() *
                         sizeof(hud.vertex.vertices.front());
     memcpy(hud.vertexData, hud.vertex.vertices.data(), numBytes);
@@ -3600,7 +3614,18 @@ bool VulkanApp::resetCommandBuffer(uint32_t i, double currentTime)
     vkCmdBindDescriptorSets(b, VK_PIPELINE_BIND_POINT_GRAPHICS,
                             hud.pipelineLayout, 0, 1,
                             &hud.desc.set, 0, nullptr);
-    vkCmdDraw(b, hud.vertex.vertices.size(), 1, 0, 0);
+    float textureBypass = 1.0f;
+    vkCmdPushConstants(b, hud.pipelineLayout,
+                       VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0, sizeof(float), &textureBypass);
+    vkCmdDraw(b, 6, 1, 0, 0);
+    if (hud.vertex.vertices.size() > 6) {
+        float textureBypass = 0.0f;
+        vkCmdPushConstants(b, hud.pipelineLayout,
+                           VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, sizeof(float), &textureBypass);
+        vkCmdDraw(b, hud.vertex.vertices.size(), 1, 6, 0);
+    }
 
     vkCmdEndRenderPass(b);
 

@@ -8,7 +8,12 @@ layout(location = 1) in vec2 uv;
 
 layout(location = 0) out vec4 outColor;
 
+layout(push_constant) uniform PushConsts {
+	float textureBypass;
+} pushConsts;
+
 void main() {
-    outColor = texture(health, uv);
+    outColor = pushConsts.textureBypass * texture(health, uv);
+    outColor += ((1.0 - pushConsts.textureBypass) * vec4(color, 1.0));
     //outColor = vec4(color, 1.0);
 }
