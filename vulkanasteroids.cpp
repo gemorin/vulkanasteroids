@@ -673,12 +673,12 @@ void VulkanApp::processCollisions(AsteroidState& a, AsteroidState& b,
     const MyPoint segment = a.position - b.position;
     const float len = segment.length();
     const float collisionDistance = a.radius + b.radius;
-    if (len > collisionDistance) {
+    if (len > (collisionDistance + 1e-4)) {
         // Nothing to do
         return;
     }
 
-    printf("time %lf contact a idx %u b idx %u\n", glfwGetTime(), i, j);
+    printf("\ntime %lf contact a idx %u b idx %u\n", glfwGetTime(), i, j);
 
     // compute normal
     MyPoint normal = segment * 1.0f;
@@ -749,11 +749,11 @@ void VulkanApp::processCollisions(AsteroidState& a, AsteroidState& b,
     velChange = impulse * (-1.0f/b.mass);
     velChange.print("velChange b ");
     rotChange.print("rotChange b ");
-    puts("");
 
     b.velocity += velChange;
-    b.velocity.print("a vel");
+    b.velocity.print("b vel ");
     b.angularVelocity += rotChange.z;
+    puts("");
 }
 
 void VulkanApp::ShipState::initiateRotation(bool pos, double currentTime)
@@ -3779,20 +3779,22 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime,
         bulletState.live = true;
     }
 
-    for (uint32_t i = 0; i < asteroidStates.size(); ++i) {
-        for (uint32_t j = (i+1) ; j < asteroidStates.size(); ++j) {
-            processCollisions(asteroidStates[i], asteroidStates[j], i, j);
-        }
-    }
     for (AsteroidState& a : asteroidStates)
         a.update(currentTime, dt, this);
-
     for (uint32_t i = 0; i < asteroidStates.size(); ++i) {
         for (uint32_t j = (i+1) ; j < asteroidStates.size(); ++j) {
             resolveAsteroidCollisions(asteroidStates[i], asteroidStates[j],
                                       true, i, j);
         }
     }
+    for (uint32_t i = 0; i < asteroidStates.size(); ++i) {
+        for (uint32_t j = (i+1) ; j < asteroidStates.size(); ++j) {
+            processCollisions(asteroidStates[i], asteroidStates[j], i, j);
+        }
+    }
+
+
+
     if (bulletState.live && !asteroidStates.empty()) {
         checkForBulletHit();
     }
