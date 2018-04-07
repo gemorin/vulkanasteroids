@@ -12,16 +12,15 @@ layout (location = 0) out vec3 color;
 layout (location = 1) out vec2 uv;
 layout (location = 2) out int instanceIndex;
 
-layout(binding = 0) uniform UniformMvp {
-    mat4 view;
+layout(binding = 0) uniform Proj {
     mat4 proj;
-} mvp;
+} u;
 layout(push_constant) uniform PushConsts {
 	mat4 transform[MAX_SPRITES_PER_DRAW];
 } pushConsts;
 
 void main() {
-    mat4 m = mvp.proj * mvp.view * pushConsts.transform[gl_InstanceIndex];
+    mat4 m = u.proj * pushConsts.transform[gl_InstanceIndex];
     gl_Position = m * vec4(position, 1.0);
 
     uv = inUv;

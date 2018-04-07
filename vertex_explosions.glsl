@@ -11,16 +11,15 @@ out gl_PerVertex {
 layout (location = 0) out vec3 color;
 layout (location = 1) out vec2 uv;
 
-layout(binding = 0) uniform UniformMvp {
-    mat4 view;
+layout(binding = 0) uniform Proj {
     mat4 proj;
-} mvp;
+} u;
 layout(push_constant) uniform PushConsts {
 	mat4 transform;
 } pushConsts;
 
 void main() {
-    mat4 m = mvp.proj * mvp.view * pushConsts.transform;
+    mat4 m = u.proj * pushConsts.transform;
     gl_Position = m * vec4(position, 1.0);
 
     uv = inUv;

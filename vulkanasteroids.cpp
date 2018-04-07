@@ -331,15 +331,12 @@ class VulkanApp
     VkCommandPool commandPool;
     vector<VkCommandBuffer> commandBuffers;
 
-    struct __attribute__((packed)) VpUniform {
-        MyMatrix view;
-        MyMatrix proj;
-    } vp;
+    MyMatrix proj;
 
     // Uniforms
-    VkBuffer vpUniformBuffer;
-    VkDeviceMemory vpUniformMemory;
-    VpUniform *vpUniformPtr;
+    VkBuffer projUniformBuffer;
+    VkDeviceMemory projUniformMemory;
+    MyMatrix *projUniformPtr;
 
    public:
     VulkanApp() = default;
@@ -700,8 +697,7 @@ void VulkanApp::processCollisions(AsteroidState& a, AsteroidState& b,
     MyPoint normal = segment * 1.0f;
     normal.normalize();
 
-    // Compute contact basis transform -- FIXME up might not work as a 2nd
-    // vector
+    // Compute contact basis transform
     MyPoint y,z;
 
     if (fabsf(normal.x) > fabsf(normal.y)) {
@@ -3043,19 +3039,8 @@ bool VulkanApp::createHUDVertex()
 
 void VulkanApp::resetVp()
 {
-    // FIXME
-#if 0
-    const float aspect = (float) devInfo.extent.width /
-                         (float) devInfo.extent.height;
-    cubeRot.rotateY(M_PI / 4.0f); // 45deg
-    mvp.model = cubeRot.toMatrix();
-    memcpy(mvpUniformPtr, &mvp, sizeof(mvp));
-#endif
-    vp.proj = ortho(getMinY(), -getMinY(), getMinX(), -getMinX(), -1.0f, 1.0f);
-    //vp.proj = ortho(-5.0f, 5.0f, -5.0f, 5.0f, -1.0f, 1.0f);
-    //vp.proj = perspective(50.0f, aspect, 0.1f, 1000.0f);
-    //vp.view.set(2, 3, -0.2f);
-    memcpy(vpUniformPtr, &vp, sizeof(vp));
+    proj = ortho(getMinY(), -getMinY(), getMinX(), -getMinX(), -1.0f, 1.0f);
+    memcpy(projUniformPtr, &proj, sizeof(proj));
 }
 
 bool VulkanApp::createUniformBuffers()
@@ -3078,14 +3063,14 @@ bool VulkanApp::createUniformBuffers()
            sizeof(rubik.mTransforms));
 #endif
 
-    if (!createBuffer(&vpUniformBuffer, &vpUniformMemory, sizeof(vp), usage,
+    if (!createBuffer(&projUniformBuffer, &projUniformMemory, sizeof(proj), usage,
                       memFlags, false)) {
         return false;
     }
 
     // init
-    vkMapMemory(device, vpUniformMemory, 0, sizeof(vp), 0,
-                (void **) &vpUniformPtr);
+    vkMapMemory(device, projUniformMemory, 0, sizeof(proj), 0,
+                (void **) &projUniformPtr);
     resetVp();
 
     return true;
@@ -3128,9 +3113,9 @@ bool VulkanApp::createBackgroundDescriptor()
 
     VkDescriptorBufferInfo bufferInfo[1];
     memset(bufferInfo, 0, sizeof(bufferInfo));
-    bufferInfo[0].buffer = vpUniformBuffer;
+    bufferInfo[0].buffer = projUniformBuffer;
     bufferInfo[0].offset = 0;
-    bufferInfo[0].range = sizeof(vp);
+    bufferInfo[0].range = sizeof(proj);
 
     VkDescriptorImageInfo imageInfo = {};
     imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -3310,9 +3295,9 @@ bool VulkanApp::createShipDescriptor()
 
     VkDescriptorBufferInfo bufferInfo[1];
     memset(bufferInfo, 0, sizeof(bufferInfo));
-    bufferInfo[0].buffer = vpUniformBuffer;
+    bufferInfo[0].buffer = projUniformBuffer;
     bufferInfo[0].offset = 0;
-    bufferInfo[0].range = sizeof(vp);
+    bufferInfo[0].range = sizeof(proj);
 
     VkDescriptorImageInfo samplerImageInfo = {};
     samplerImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -3399,9 +3384,9 @@ bool VulkanApp::createExplosionDescriptor()
 
     VkDescriptorBufferInfo bufferInfo[1];
     memset(bufferInfo, 0, sizeof(bufferInfo));
-    bufferInfo[0].buffer = vpUniformBuffer;
+    bufferInfo[0].buffer = projUniformBuffer;
     bufferInfo[0].offset = 0;
-    bufferInfo[0].range = sizeof(vp);
+    bufferInfo[0].range = sizeof(proj);
 
     VkDescriptorImageInfo imageInfo = {};
     imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -3982,7 +3967,6 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime,
 
 bool VulkanApp::recreateSwapChain()
 {
-    // XXX FIXME
     waitForIdle();
 
     updateExtent();
@@ -4076,9 +4060,9 @@ void VulkanApp::cleanup()
     //vkUnmapMemory(device, cubeTransformsUniformBufferMemory);
     //vkFreeMemory(device, cubeTransformsUniformBufferMemory, nullptr);
 
-    vkDestroyBuffer(device, vpUniformBuffer, nullptr);
-    vkUnmapMemory(device, vpUniformMemory);
-    vkFreeMemory(device, vpUniformMemory, nullptr);
+    vkDestroyBuffer(device, projUniformBuffer, nullptr);
+    vkUnmapMemory(device, projUniformMemory);
+    vkFreeMemory(device, projUniformMemory, nullptr);
 
     vkDestroyDescriptorPool(device, backgroundDescriptor.pool, nullptr);
     vkDestroyDescriptorPool(device, spritesDescriptor.pool, nullptr);
