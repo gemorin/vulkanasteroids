@@ -21,7 +21,7 @@ MACROS=-DMAX_SPRITES_PER_DRAW=$(MAX_SPRITES_PER_DRAW) -DSPRITE_TEXTURE_ARRAY_SIZ
 
 INCS=-I$(GLFWDIR)/include/GLFW -I$(VULKANINCPATH)
 CXXFLAGS=-Wall -W -g $(INCS) -std=c++14 -O2 -fno-exceptions $(MACROS)
-LDFLAGS=-g -L$(GLFWDIR)/src -L $(VULKANLIBPATH) -framework Cocoa -framework Metal -framework IOSurface -rpath $(VULKANLIBPATH) -lglfw -lvulkan
+LDFLAGS=-g -L$(GLFWDIR)/src -L $(VULKANLIBPATH) -framework Cocoa -framework Metal -framework IOSurface -rpath $(VULKANLIBPATH) -lglfw -lvulkan -lsdl2_mixer -lsdl2
 
 all: vulkanasteroids fragment_background.spv vertex_background.spv vertex_sprite.spv fragment_sprite.spv vertex_explosions.spv fragment_explosions.spv vertex_overlay.spv fragment_overlay.spv vertex_hud.spv fragment_hud.spv
 vulkanasteroids: vulkanasteroids.o mymath.o stb_image.o

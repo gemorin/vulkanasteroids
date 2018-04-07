@@ -18,6 +18,9 @@
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
 
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_mixer.h>
+
 using namespace std;
 
 static constexpr bool enableValidation = true;
@@ -317,6 +320,12 @@ class VulkanApp
         VkPipeline pipeline;
     } hud;
 
+    struct {
+        Mix_Chunk *shoot = nullptr;
+        Mix_Music *beat = nullptr;
+        Mix_Chunk *asteroidExplosion = nullptr;
+    } audio;
+
     vector<VkFramebuffer> frameBuffers;
 
     VkCommandPool commandPool;
@@ -355,6 +364,7 @@ class VulkanApp
     }
 
     bool init();
+    bool initAudio();
     bool initGlFw();
     bool initVulkanInstance();
     bool createSurface();
@@ -590,6 +600,7 @@ void VulkanApp::checkForBulletHit()
             changeScore(5 * (1 + asteroidStates[i].sizeType));
             onBulletHit(asteroidStates[i], i);
             bulletState.live = false;
+            Mix_PlayChannel(-1, audio.asteroidExplosion, 0);
             break;
         }
     }
@@ -1018,7 +1029,8 @@ bool VulkanApp::init()
      || !createVertexBuffers()
      || !createUniformBuffers()
      || !createDescriptors()
-     || !setupCommandBuffers())
+     || !setupCommandBuffers()
+     || !initAudio())
         return false;
     return true;
 }
@@ -1062,14 +1074,15 @@ void VulkanApp::run()
         }
     }
 
+    Mix_HaltChannel(-1);
     waitForIdle();
     cleanup();
 }
 
 void VulkanApp::waitForIdle()
 {
-    //for (auto & swpe : swapChain)
-    //    vkWaitForFences(device, 1, &swpe.fence, VK_TRUE, UINT64_MAX);
+    for (auto & swpe : swapChain)
+        vkWaitForFences(device, 1, &swpe.fence, VK_TRUE, UINT64_MAX);
     vkDeviceWaitIdle(device);
 }
 
@@ -2980,6 +2993,7 @@ void VulkanApp::changeHealth(int32_t sub)
            numBytes);
     char * const dest = (char *) textOverlay.vertexData;
     memcpy(dest, textOverlay.vertex.vertices.data(), numBytes);
+    Mix_HaltChannel(-1);
 }
 
 bool VulkanApp::createHUDVertex()
@@ -3437,6 +3451,43 @@ bool VulkanApp::setupCommandBuffers()
     return true;
 }
 
+bool VulkanApp::initAudio()
+{
+    if (SDL_Init(SDL_INIT_AUDIO)) {
+        printf("SDL_Init failed: %s\n", SDL_GetError());
+        return false;
+    }
+
+    int audio_rate = 22050;
+    Uint16 audio_format = AUDIO_S16SYS;
+    int audio_channels = 2;
+    int audio_buffers = 1024;
+
+    if (Mix_OpenAudio(audio_rate, audio_format, audio_channels, audio_buffers))
+    {
+        printf("Unable to initialize audio: %s\n", Mix_GetError());
+        return false;
+    }
+    audio.shoot = Mix_LoadWAV("assets/shoot.wav");
+    if (!audio.shoot) {
+        printf("Mix_LoadWAV failed: %s\n", Mix_GetError());
+        return false;
+    }
+    audio.asteroidExplosion = Mix_LoadWAV("assets/asteroid_explosion.wav");
+    if (!audio.asteroidExplosion) {
+        printf("Mix_LoadWAV failed: %s\n", Mix_GetError());
+        return false;
+    }
+    audio.beat = Mix_LoadMUS("assets/SimpleBeat.ogg");
+    if (!audio.beat) {
+        printf("Mix_LoadMUS failed: %s\n", Mix_GetError());
+        return false;
+    }
+    Mix_PlayMusic(audio.beat, -1);
+
+    return true;
+}
+
 bool VulkanApp::resetCommandBuffer(uint32_t i, double currentTime)
 {
     VkCommandBuffer& b = commandBuffers[i];
@@ -3788,6 +3839,7 @@ void VulkanApp::resetWorld()
     bulletState.live = false;
     changeHealth(-initialHealth);
     changeScore(-score);
+    Mix_PlayMusic(audio.beat, -1);
 }
 
 void VulkanApp::updateWorld(double currentTime, double dt)
@@ -3823,6 +3875,7 @@ void VulkanApp::updateWorld(double currentTime, double dt)
         bulletState.position = shipState.position + firingDirection * disp;
         bulletState.velocity = firingDirection * 0.5f;
         bulletState.live = true;
+        Mix_PlayChannel(-1, audio.shoot, 0);
     }
 
     for (AsteroidState& a : asteroidStates)
@@ -3856,8 +3909,8 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime,
     // Draw
     const uint32_t idx = renderCount % swapChain.size();
 
-    //vkWaitForFences(device, 1, &swapChain[idx].fence, VK_TRUE, UINT64_MAX);
-    //vkResetFences(device, 1, &swapChain[idx].fence);
+    vkWaitForFences(device, 1, &swapChain[idx].fence, VK_TRUE, UINT64_MAX);
+    vkResetFences(device, 1, &swapChain[idx].fence);
 
     if (health)
         updateWorld(currentTime, dt);
@@ -3890,7 +3943,7 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime,
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
 
-    vkRet = vkQueueSubmit(graphicsQueue, 1, &submitInfo, nullptr); //swapChain[idx].fence);
+    vkRet = vkQueueSubmit(graphicsQueue, 1, &submitInfo, swapChain[idx].fence);
     if (vkRet != VK_SUCCESS) {
         printf("vkQueueSubmit failed with %d\n", vkRet);
         return false;
@@ -4036,6 +4089,7 @@ void VulkanApp::cleanup()
     glfwDestroyWindow(window);
 
     glfwTerminate();
+    Mix_CloseAudio();
 }
 
 void VulkanApp::onResize(int width, int height)
