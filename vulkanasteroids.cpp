@@ -253,10 +253,11 @@ class VulkanApp
 
     vector<AsteroidState> asteroidStates;
     float bigAsteroidSize[2];
-    uniform_int_distribution<> asteroidSpawnRand{1, 3};
+    uniform_int_distribution<> asteroidSpawnRand{1, 6};
     double lastSpawnRandCheck = 0.0;
-    uint32_t score = 0;
-    uint32_t health = 100;
+    int32_t score = 0;
+    static constexpr uint32_t initialHealth = 100;
+    int32_t health = initialHealth;
 
     struct Explosions {
         Texture atlas;
@@ -289,6 +290,7 @@ class VulkanApp
         VkSampler fontSampler;
         VertexBuffer vertex;
         void *vertexData;
+        size_t basicVertexSize;
         size_t scoreStartIdx;
         VkDescriptorSetLayout layout;
         Descriptor desc;
@@ -373,8 +375,8 @@ class VulkanApp
     bool resetCommandBuffer(uint32_t i, double currentTime);
     bool createVertexBuffers();
     bool createOverlayVertex();
-    void createOverlayVertices(vector<Vertex>& vertices, float x, float y,
-                               const string& s);
+    void createOverlayVertices(Vertex* vertices, float x, float y,
+                               const string& s, float scale = 1.0f);
     bool createHUDVertex();
     bool createUniformBuffers();
     bool createDescriptors();
@@ -441,11 +443,13 @@ class VulkanApp
     double getDeltaVelocity(const AsteroidState& a,
                             const MyPoint& relativeContactPos,
                             const MyPoint& normal);
-    void changeScore(uint32_t add);
-    void changeHealth(uint32_t sub);
+    void changeScore(int32_t add);
+    void changeHealth(int32_t sub);
 
     bool renderFrame(uint32_t renderCount, double currentTime,
                      double dt);
+    void updateWorld(double currentTime, double dt);
+    void resetWorld();
 
     // Glfw glue
     static void glfw_onResize(GLFWwindow * window, int width, int height)
@@ -1128,7 +1132,7 @@ bool VulkanApp::initGlFw() {
     window = glfwCreateWindow(800, 600, "VulkanAsteroids", nullptr, nullptr);
     glfwSetWindowUserPointer(window, this);
     glfwSetWindowSizeCallback(window, &VulkanApp::glfw_onResize);
-    // glfwSetKeyCallback(window, &VulkanApp::glfw_onKey);
+    glfwSetKeyCallback(window, &VulkanApp::glfw_onKey);
 
     VkExtensionProperties properties[16];
     uint32_t extensionCount = 16;
@@ -2784,71 +2788,72 @@ bool VulkanApp::createVertexBuffers()
     return true;
 }
 
-void VulkanApp::createOverlayVertices(vector<Vertex>& vertices,
+void VulkanApp::createOverlayVertices(Vertex *vertices,
                                       float x, float y,
-                                      const string& s)
+                                      const string& s,
+                                      float scale)
 {
     const float pixelWidth = 2.0f / float(devInfo.extent.width);
     const float pixelHeight = 2.0f / float(devInfo.extent.height);
     const Texture *t = &textOverlay.font;
     constexpr MyPoint red(1.0f, 0.0f, 0.0f);
+
     for (char c : s) {
         auto *data = &textOverlay.fontData[c - textOverlay.fontFirstChar];
-        float x0 = data->xoff;
-        float y0 = data->yoff;
-        float x1 = data->xoff + data->x1 - data->x0;
-        float y1 = data->yoff + data->y1 - data->y0;
+        float x0 = data->xoff * scale;
+        float y0 = data->yoff * scale;
+        float x1 = data->xoff + (data->x1 - data->x0) * scale;
+        float y1 = data->yoff + (data->y1 - data->y0) * scale;
         MyPoint pos;
         float u,v;
         pos.x = x + (float) x0 * pixelWidth;
         pos.y = y + (float) y0 * pixelHeight;
         u = (float) data->x0 / t->width;
         v = (float) data->y0 / t->height;
-        vertices.emplace_back(pos, red, u, v);
+        *(vertices++) = Vertex(pos, red, u, v);
 
         pos.x = x + (float) x1 * pixelWidth;
         pos.y = y + (float) y0 * pixelHeight;
         u = (float) data->x1 / t->width;
         v = (float) data->y0 / t->height;
-        vertices.emplace_back(pos, red, u, v);
+        *(vertices++) = Vertex(pos, red, u, v);
 
         pos.x = x + (float) x1 * pixelWidth;
         pos.y = y + (float) y1 * pixelHeight;
         u = (float) data->x1 / t->width;
         v = (float) data->y1 / t->height;
-        vertices.emplace_back(pos, red, u, v);
+        *(vertices++) = Vertex(pos, red, u, v);
 
         pos.x = x + (float) x0 * pixelWidth;
         pos.y = y + (float) y0 * pixelHeight;
         u = (float) data->x0 / t->width;
         v = (float) data->y0 / t->height;
-        vertices.emplace_back(pos, red, u, v);
+        *(vertices++) = Vertex(pos, red, u, v);
 
         pos.x = x + (float) x1 * pixelWidth;
         pos.y = y + (float) y1 * pixelHeight;
         u = (float) data->x1 / t->width;
         v = (float) data->y1 / t->height;
-        vertices.emplace_back(pos, red, u, v);
+        *(vertices++) = Vertex(pos, red, u, v);
 
         pos.x = x + (float) x0 * pixelWidth;
         pos.y = y + (float) y1 * pixelHeight;
         u = (float) data->x0 / t->width;
         v = (float) data->y1 / t->height;
-        vertices.emplace_back(pos, red, u, v);
+        *(vertices++) = Vertex(pos, red, u, v);
 
-        x += data->xadvance * pixelWidth;
+        x += data->xadvance * pixelWidth * scale;
     }
 }
 
-void VulkanApp::changeScore(uint32_t add)
+void VulkanApp::changeScore(int32_t add)
 {
     score += add;
     char buf[32];
     sprintf(buf, "Score %6u", score);
-    textOverlay.vertex.vertices.erase(
-            textOverlay.vertex.vertices.begin() + textOverlay.scoreStartIdx,
-            textOverlay.vertex.vertices.end());
-    createOverlayVertices(textOverlay.vertex.vertices, -0.95f, -0.95f, buf);
+    createOverlayVertices(textOverlay.vertex.vertices.data() +
+                          textOverlay.scoreStartIdx,
+                          -0.95f, -0.95f, buf);
     uint32_t numBytes = (textOverlay.vertex.vertices.size () -
                          textOverlay.scoreStartIdx) * sizeof(Vertex);
     char *dest = (char *) textOverlay.vertexData;
@@ -2856,8 +2861,6 @@ void VulkanApp::changeScore(uint32_t add)
     memcpy(dest, textOverlay.vertex.vertices.data() + textOverlay.scoreStartIdx,
            numBytes);
 }
-
-
 
 bool VulkanApp::createOverlayVertex()
 {
@@ -2872,18 +2875,22 @@ bool VulkanApp::createOverlayVertex()
     }
     float x = totalWidth / -2.0f;
     float y = -0.95f;
-    createOverlayVertices(textOverlay.vertex.vertices, x, y, s);
-    textOverlay.scoreStartIdx = textOverlay.vertex.vertices.size();
+    vector<Vertex>& vertices = textOverlay.vertex.vertices;
+    vertices.resize(s.length() * 6);
+    createOverlayVertices(vertices.data(), x, y, s);
+    textOverlay.scoreStartIdx = vertices.size();
 
     // Score
     char buf[32];
     sprintf(buf, "Score %6u", score);
     x = -0.95f;
     y = -0.95f;
-    createOverlayVertices(textOverlay.vertex.vertices, x, y, buf);
 
-    uint32_t numBytes = textOverlay.vertex.vertices.size() *
-                        sizeof(textOverlay.vertex.vertices.front());
+    vertices.resize(vertices.size() + strlen(buf) * 6);
+    createOverlayVertices(vertices.data() + textOverlay.scoreStartIdx, x, y,
+                          buf);
+
+    uint32_t numBytes = vertices.size() * sizeof(vertices.front());
     const VkBufferUsageFlags vertexUsage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
     const VkMemoryPropertyFlags memFlags =
                                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
@@ -2894,15 +2901,15 @@ bool VulkanApp::createOverlayVertex()
     }
     vkMapMemory(device, textOverlay.vertex.memory, 0, numBytes, 0,
                 &textOverlay.vertexData);
-    memcpy(textOverlay.vertexData, textOverlay.vertex.vertices.data(),
-           numBytes);
+    memcpy(textOverlay.vertexData, vertices.data(), numBytes);
+    textOverlay.basicVertexSize = vertices.size();
 
     // Unlike other vertices, we do not unmap it so we can update it
 
     return true;
 }
 
-void VulkanApp::changeHealth(uint32_t sub)
+void VulkanApp::changeHealth(int32_t sub)
 {
     if (health > sub)
         health -= sub;
@@ -2937,6 +2944,42 @@ void VulkanApp::changeHealth(uint32_t sub)
     uint32_t numBytes = hud.vertex.vertices.size() *
                         sizeof(hud.vertex.vertices.front());
     memcpy(hud.vertexData, hud.vertex.vertices.data(), numBytes);
+    if (health)
+        return;
+
+    vkDestroyBuffer(device, textOverlay.vertex.buffer, nullptr);
+    vkUnmapMemory(device, textOverlay.vertex.memory);
+    vkFreeMemory(device, textOverlay.vertex.memory, nullptr);
+
+    string s = "GAME OVER";
+    float totalWidth = 0.0f;
+    const float pixelWidth = 2.0f / float(devInfo.extent.width);
+    for (char c : s) {
+        auto *data = &textOverlay.fontData[c - textOverlay.fontFirstChar];
+        totalWidth += (data->xadvance * pixelWidth * 2.0f);
+        //maxY = max(maxY, (float) data->y1 * pixelHeight);
+    }
+    float x = totalWidth / -2.0f;
+    size_t prevSize = textOverlay.vertex.vertices.size();
+    textOverlay.vertex.vertices.resize(prevSize + s.length() * 6);
+    createOverlayVertices(textOverlay.vertex.vertices.data() + prevSize,
+                          x, 0.0f, s, 2.0f);
+
+    numBytes = textOverlay.vertex.vertices.size() * sizeof(Vertex);
+
+    const VkBufferUsageFlags vertexUsage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    const VkMemoryPropertyFlags memFlags =
+                                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    createBuffer(&textOverlay.vertex.buffer, &textOverlay.vertex.memory,
+                 numBytes, vertexUsage, memFlags, false);
+
+    vkMapMemory(device, textOverlay.vertex.memory, 0, numBytes, 0,
+                &textOverlay.vertexData);
+    memcpy(textOverlay.vertexData, textOverlay.vertex.vertices.data(),
+           numBytes);
+    char * const dest = (char *) textOverlay.vertexData;
+    memcpy(dest, textOverlay.vertex.vertices.data(), numBytes);
 }
 
 bool VulkanApp::createHUDVertex()
@@ -3736,16 +3779,19 @@ void VulkanApp::spawnNewAsteroid(double currentTime)
     }
 }
 
-bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime,
-                            double dt)
+void VulkanApp::resetWorld()
 {
-    (void) currentTime; // remove when we actually render stuff
-    // Draw
-    const uint32_t idx = renderCount % swapChain.size();
+    textOverlay.vertex.vertices.resize(textOverlay.basicVertexSize);
 
-    //vkWaitForFences(device, 1, &swapChain[idx].fence, VK_TRUE, UINT64_MAX);
-    //vkResetFences(device, 1, &swapChain[idx].fence);
+    asteroidStates.clear();
+    shipState = ShipState();
+    bulletState.live = false;
+    changeHealth(-initialHealth);
+    changeScore(-score);
+}
 
+void VulkanApp::updateWorld(double currentTime, double dt)
+{
 #ifndef TEST_COLLISIONS
     if (asteroidStates.size() < maxNumAsteroids) {
         if (currentTime > (lastSpawnRandCheck + 1.0)) {
@@ -3793,8 +3839,6 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime,
         }
     }
 
-
-
     if (bulletState.live && !asteroidStates.empty()) {
         checkForBulletHit();
     }
@@ -3803,6 +3847,20 @@ bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime,
     }
 
     shipState.update(currentTime, dt, this);
+}
+
+bool VulkanApp::renderFrame(uint32_t renderCount, double currentTime,
+                            double dt)
+{
+    (void) currentTime; // remove when we actually render stuff
+    // Draw
+    const uint32_t idx = renderCount % swapChain.size();
+
+    //vkWaitForFences(device, 1, &swapChain[idx].fence, VK_TRUE, UINT64_MAX);
+    //vkResetFences(device, 1, &swapChain[idx].fence);
+
+    if (health)
+        updateWorld(currentTime, dt);
 
     resetCommandBuffer(idx, currentTime);
 
@@ -3988,8 +4046,14 @@ void VulkanApp::onResize(int width, int height)
     recreateSwapChain();
 }
 
-void VulkanApp::onKey(int /*key*/, int /*action*/)
+void VulkanApp::onKey(int key, int action)
 {
+    if (health)
+        return;
+    if (key == GLFW_KEY_SPACE && action == GLFW_RELEASE) {
+        // Reset the world
+        resetWorld();
+    }
 }
 
 void VulkanApp::copyBufferToImage(VkBuffer buffer, VkImage image,
