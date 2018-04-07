@@ -664,6 +664,7 @@ void VulkanApp::checkForAsteroidHit(double currentTime)
             shipState.startHitAnim = currentTime;
             explosions.actives.emplace_back(asteroidStates[i].position, 0.0);
             asteroidStates.erase(asteroidStates.begin() + i);
+            Mix_PlayChannel(-1, audio.asteroidExplosion, 0);
             break;
         }
     }
@@ -1075,6 +1076,7 @@ void VulkanApp::run()
     }
 
     Mix_HaltChannel(-1);
+    Mix_HaltMusic();
     waitForIdle();
     cleanup();
 }
@@ -2993,7 +2995,7 @@ void VulkanApp::changeHealth(int32_t sub)
            numBytes);
     char * const dest = (char *) textOverlay.vertexData;
     memcpy(dest, textOverlay.vertex.vertices.data(), numBytes);
-    Mix_HaltChannel(-1);
+    Mix_HaltMusic();
 }
 
 bool VulkanApp::createHUDVertex()
@@ -3765,6 +3767,7 @@ void VulkanApp::spawnNewAsteroid(double currentTime)
     }
     while (1) {
         AsteroidState newAsteroid;
+        float angleOffset = 0.0;
         if (spawnSide(randomGen)) {
             newAsteroid.position = {disX(randomGen),
                                     -getMinY() - bigAsteroidSize[1] / 2.0f,
@@ -3772,12 +3775,19 @@ void VulkanApp::spawnNewAsteroid(double currentTime)
             if (spawnSide(randomGen)) {
                 newAsteroid.position.y *= -1.0f;
             }
+            else {
+                angleOffset = M_PI;
+            }
         }
         else {
             newAsteroid.position = {-getMinX() - bigAsteroidSize[0] / 2.0f,
                                     disY(randomGen), 0.0f};
             if (spawnSide(randomGen)) {
                 newAsteroid.position.y *= -1.0f;
+                angleOffset -= M_PI/2;
+            }
+            else {
+                angleOffset += M_PI/2;
             }
         }
 
@@ -3800,10 +3810,10 @@ void VulkanApp::spawnNewAsteroid(double currentTime)
 
         // Generate velocity
         MyPoint direction(0.0f, 1.0f, 0.0f);
-        static uniform_real_distribution<float> angle(-M_PI, M_PI);
+        static uniform_real_distribution<float> angle(0, M_PI);
 
         MyQuaternion rot;
-        rot.rotateZ(angle(randomGen));
+        rot.rotateZ(angle(randomGen) + angleOffset);
         MyPoint v = direction.transform(rot);
         v.normalize();
 
