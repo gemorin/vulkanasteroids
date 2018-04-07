@@ -247,11 +247,13 @@ class VulkanApp
         MyPoint position;
         MyQuaternion orientation;
         MyPoint velocity;
-        bool live = false;
+        bool live = true;
 
         void update(double dt, const VulkanApp *app);
         MyMatrix getTransform() const;
-    } bulletState;
+    };
+    vector<BulletState> bulletStates;
+    double lastBulletSpawn = -10.0f;
     float bulletSize[2];
 
     vector<AsteroidState> asteroidStates;
@@ -570,35 +572,41 @@ void VulkanApp::getAsteroidSize(float *sz, const AsteroidState &a)
 
 void VulkanApp::checkForBulletHit()
 {
-    MyPoint vertices[6];
-    const uint32_t startIdx = 6 * sprites.shipBulletTextureIndex;
-    for (uint32_t i = 0; i < 6; ++i) {
-        const Vertex v = spriteVertex.vertices[startIdx + i];
-        vertices[i] = v.pos.transform(bulletState.orientation);
-        vertices[i] += bulletState.position;
-    }
+    MyAABB2 bullets[bulletStates.size()];
+    for (uint32_t bIdx = 0; bIdx < bulletStates.size(); ++bIdx) {
+        const BulletState& b = bulletStates[bIdx];
+        MyPoint vertices[6];
+        const uint32_t startIdx = 6 * shipBulletVertexIndex;
+        for (uint32_t i = 0; i < 6; ++i) {
+            const Vertex v = spriteVertex.vertices[startIdx + i];
+            vertices[i] = v.pos.transform(b.orientation);
+            vertices[i] += b.position;
+        }
 
-    MyAABB2 bullet;
-    bullet.min = {FLT_MAX, FLT_MAX};
-    bullet.max = { -FLT_MAX, -FLT_MAX};
-    for (uint32_t i = 0; i < 6; ++i) {
-        bullet.min.x = min(bullet.min.x, vertices[i].x);
-        bullet.min.y = min(bullet.min.y, vertices[i].y);
+        MyAABB2& bullet = bullets[bIdx];
+        bullet.min = {FLT_MAX, FLT_MAX};
+        bullet.max = { -FLT_MAX, -FLT_MAX};
+        for (uint32_t i = 0; i < 6; ++i) {
+            bullet.min.x = min(bullet.min.x, vertices[i].x);
+            bullet.min.y = min(bullet.min.y, vertices[i].y);
 
-        bullet.max.x = max(bullet.max.x, vertices[i].x);
-        bullet.max.y = max(bullet.max.y, vertices[i].y);
+            bullet.max.x = max(bullet.max.x, vertices[i].x);
+            bullet.max.y = max(bullet.max.y, vertices[i].y);
+        }
     }
     for (uint32_t i = 0; i < asteroidStates.size(); ++i) {
         float sz[2];
         getAsteroidSize(sz, asteroidStates[i]);
         MyAABB2 a = getSphereAABB(sz, asteroidStates[i].position);
 
-        if (bullet.overlap(a)) {
-            changeScore(5 * (1 + asteroidStates[i].sizeType));
-            onBulletHit(asteroidStates[i], i);
-            bulletState.live = false;
-            Mix_PlayChannel(-1, audio.asteroidExplosion, 0);
-            break;
+        for (uint32_t j = 0; j < bulletStates.size(); ++j) {
+            if (bullets[j].overlap(a)) {
+                changeScore(5 * (1 + asteroidStates[i].sizeType));
+                onBulletHit(asteroidStates[i], i);
+                Mix_PlayChannel(-1, audio.asteroidExplosion, 0);
+                bulletStates.erase(bulletStates.begin() + j);
+                break;
+            }
         }
     }
 }
@@ -3628,17 +3636,32 @@ bool VulkanApp::resetCommandBuffer(uint32_t i, double currentTime)
     }
 
     // Bullet
-    if (bulletState.live) {
-        MyMatrix bulletTransform = bulletState.getTransform();
-        vkCmdPushConstants(b, spritesPipelineLayout,
-                           VK_SHADER_STAGE_VERTEX_BIT, 0,
-                           sizeof(bulletTransform), &bulletTransform);
-        uint32_t idx = sprites.shipBulletTextureIndex;
+    if (!bulletStates.empty()) {
+        const uint32_t maxDraw = MAX_SPRITES_PER_DRAW;
+        uint32_t textureIdx[maxDraw];
+        for (uint32_t i = 0; i < maxDraw; ++i) {
+            textureIdx[i] = sprites.shipBulletTextureIndex;
+        }
         vkCmdPushConstants(b, spritesPipelineLayout,
                            VK_SHADER_STAGE_FRAGMENT_BIT,
                            vertexPushConstantsSize,
-                           sizeof(idx), &idx);
-        vkCmdDraw(b, 6, 1, shipBulletVertexIndex * 6, 0);
+                           sizeof(textureIdx), textureIdx);
+
+        MyMatrix transforms[bulletStates.size()];
+        for (uint32_t i = 0; i < bulletStates.size(); ++i) {
+            transforms[i] = bulletStates[i].getTransform();
+        }
+        const uint32_t numDrawCalls = bulletStates.size() / maxDraw + 1;
+        uint32_t numToDraw = bulletStates.size();
+        for (uint32_t it = 0; numToDraw && it < numDrawCalls; ++it) {
+            vkCmdPushConstants(b, spritesPipelineLayout,
+                               VK_SHADER_STAGE_VERTEX_BIT, 0,
+                               sizeof(*transforms) * maxDraw,
+                               transforms + it * maxDraw);
+            vkCmdDraw(b, 6, min(maxDraw, numToDraw),
+                      shipBulletVertexIndex * 6, 0);
+            numToDraw -= maxDraw;
+        }
     }
 
     // Explosions
@@ -3830,8 +3853,8 @@ void VulkanApp::resetWorld()
     textOverlay.vertex.vertices.resize(textOverlay.basicVertexSize);
 
     asteroidStates.clear();
+    bulletStates.clear();
     shipState = ShipState();
-    bulletState.live = false;
     changeHealth(-initialHealth);
     changeScore(-score);
     Mix_PlayMusic(audio.beat, -1);
@@ -3852,14 +3875,27 @@ void VulkanApp::updateWorld(double currentTime, double dt)
         spawnNewAsteroid(currentTime);
     }
 #endif
-    if (bulletState.live) {
-        bulletState.update(dt, this);
+    if (!bulletStates.empty()) {
+        for (auto & b : bulletStates) {
+            b.update(dt, this);
+        }
+        auto it = bulletStates.begin();
+        while (it != bulletStates.end()) {
+            if (!it->live) {
+                it = bulletStates.erase(it);
+            }
+            else {
+                ++it;
+            }
+        }
     }
-    else if (GLFW_PRESS == glfwGetKey(window, GLFW_KEY_SPACE)) {
+    if (GLFW_PRESS == glfwGetKey(window, GLFW_KEY_SPACE)
+     && (currentTime - lastBulletSpawn) >= 0.3) {
         // We should start with the same orientation as the ship but the
         // model is not facing the same way.  XXX maybe flip the vertices
         MyQuaternion oneMore;
         oneMore.rotateZ(M_PI);
+        BulletState bulletState;
         bulletState.orientation = shipState.orientation * oneMore;
 
         MyPoint firingDirection(0.0f, -1.0f, 0.0f);
@@ -3868,8 +3904,9 @@ void VulkanApp::updateWorld(double currentTime, double dt)
         const float disp = shipSize[1] / 2.0f + bulletSize[1] / 2.0f;
 
         bulletState.position = shipState.position + firingDirection * disp;
-        bulletState.velocity = firingDirection * 0.5f;
-        bulletState.live = true;
+        bulletState.velocity = firingDirection * 0.5f + shipState.velocity;
+        bulletStates.emplace_back(bulletState);
+        lastBulletSpawn = currentTime;
         Mix_PlayChannel(-1, audio.shoot, 0);
     }
 
@@ -3887,7 +3924,7 @@ void VulkanApp::updateWorld(double currentTime, double dt)
         }
     }
 
-    if (bulletState.live && !asteroidStates.empty()) {
+    if (!bulletStates.empty() && !asteroidStates.empty()) {
         checkForBulletHit();
     }
     if (!asteroidStates.empty()) {
