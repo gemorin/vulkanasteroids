@@ -2945,11 +2945,11 @@ void VulkanApp::changeHealth(int32_t sub)
     float right = hud.left + hud.fullWidth * vv;
     float end = hud.left + hud.fullWidth;
     *(v++) = {MyPoint{hud.left, hud.bottom, z}, red, 0.0f, vv};
-    *(v++) = {MyPoint{right,    hud.bottom, z}, red, 1.0f, vv};
-    *(v++) = {MyPoint{right,    hud.top, z}, red, 1.0f, 0.0f};
+    *(v++) = {MyPoint{right,    hud.bottom, z}, red, vv, vv};
+    *(v++) = {MyPoint{right,    hud.top, z}, red, vv, 0.0f};
     // 2nd triangle
     *(v++) = {MyPoint{hud.left, hud.bottom, z}, red, 0.0f, vv};
-    *(v++) = {MyPoint{right,    hud.top,    z}, red, 1.0f, 0.0f};
+    *(v++) = {MyPoint{right,    hud.top,    z}, red, vv, 0.0f};
     *(v++) = {MyPoint{hud.left, hud.top,    z}, red, 0.0f, 0.0f};
 
     constexpr MyPoint gray(0.2f, 0.2f, 0.2f);
@@ -4135,7 +4135,7 @@ void VulkanApp::onKey(int key, int action)
 {
     if (health)
         return;
-    if (key == GLFW_KEY_SPACE && action == GLFW_RELEASE) {
+    if (key == GLFW_KEY_ENTER && action == GLFW_RELEASE) {
         // Reset the world
         resetWorld();
     }
