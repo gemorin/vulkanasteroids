@@ -130,15 +130,15 @@ MyMatrix MyQuaternion::toMatrix() const
     q.normalize();
 
     MyMatrix ret;
-    ret.set(0, 0, 1.0f - 2.0f * y * y - 2.0f * z * z);
-    ret.set(0, 1, 2.0f * x * y - 2.0f * w * z);
-    ret.set(0, 2, 2.0f * x * z + 2.0f * w * y);
-    ret.set(1, 0, 2.0f * x * y + 2.0f * w * z);
-    ret.set(1, 1, 1.0f - 2.0f * x * x - 2.0f * z * z);
-    ret.set(1, 2, 2.0f * y * z - 2.0f * w * x);
-    ret.set(2, 0, 2.0f * x * z - 2.0f * w * y);
-    ret.set(2, 1, 2.0f * y * z + 2.0f * w * x);
-    ret.set(2, 2, 1.0f - 2.0f * x * x - 2.0f * y * y);
+    ret.set(0, 0, 1.0f - 2.0f * q.y * q.y - 2.0f * q.z * q.z);
+    ret.set(0, 1, 2.0f * q.x * q.y - 2.0f * q.w * q.z);
+    ret.set(0, 2, 2.0f * q.x * q.z + 2.0f * q.w * q.y);
+    ret.set(1, 0, 2.0f * q.x * q.y + 2.0f * q.w * q.z);
+    ret.set(1, 1, 1.0f - 2.0f * q.x * q.x - 2.0f * q.z * q.z);
+    ret.set(1, 2, 2.0f * q.y * q.z - 2.0f * q.w * q.x);
+    ret.set(2, 0, 2.0f * q.x * q.z - 2.0f * q.w * q.y);
+    ret.set(2, 1, 2.0f * q.y * q.z + 2.0f * q.w * q.x);
+    ret.set(2, 2, 1.0f - 2.0f * q.x * q.x - 2.0f * q.y * q.y);
 
     return ret;
 }
